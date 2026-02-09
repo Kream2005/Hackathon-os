@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   # ---- DATABASE ----
   database:
@@ -76,40 +74,51 @@ services:
         condition: service_healthy
     networks:
       - incident-platform
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
       interval: 30s
       timeout: 5s
+      start_period: 15s
       retries: 3
 
-  # ---- NOTIFICATION SERVICE (Person 3 - Optional) ----
+  # ---- NOTIFICATION SERVICE ----
   notification-service:
     build: ./services/notification-service
     ports:
       - "8004:8004"
     networks:
       - incident-platform
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
       interval: 30s
       timeout: 5s
+      start_period: 15s
       retries: 3
 
-  # ---- WEB UI (Person 3) ----
+  # ---- WEB UI ----
   web-ui:
     build: ./services/web-ui
     ports:
       - "8080:8080"
+    environment:
+      ALERT_INGESTION_URL: http://alert-ingestion:8001
+      INCIDENT_MANAGEMENT_URL: http://incident-management:8002
+      ONCALL_SERVICE_URL: http://oncall-service:8003
+      NOTIFICATION_SERVICE_URL: http://notification-service:8004
     depends_on:
       - alert-ingestion
       - incident-management
       - oncall-service
     networks:
       - incident-platform
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
       interval: 30s
       timeout: 5s
+      start_period: 15s
       retries: 3
 
   # ---- PROMETHEUS ----
@@ -122,9 +131,16 @@ services:
       - "9090:9090"
     networks:
       - incident-platform
+    restart: unless-stopped
     command:
       - '--config.file=/etc/prometheus/prometheus.yml'
       - '--storage.tsdb.path=/prometheus'
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:9090/-/healthy"]
+      interval: 30s
+      timeout: 5s
+      start_period: 10s
+      retries: 3
 
   # ---- GRAFANA ----
   grafana:
@@ -140,9 +156,17 @@ services:
     ports:
       - "3000:3000"
     depends_on:
-      - prometheus
+      prometheus:
+        condition: service_healthy
     networks:
       - incident-platform
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 5s
+      start_period: 15s
+      retries: 3
 
 volumes:
   db-data:

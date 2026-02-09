@@ -1,0 +1,30 @@
+title = "Gitleaks Config — Incident Platform"
+
+[extend]
+useDefault = true
+
+# Custom rules for extra detection
+[[rules]]
+id = "custom-password-assignment"
+description = "Detect hardcoded password assignments in code"
+regex = '''(?i)(password|passwd|pwd|secret_key|api_key|auth_token)\s*=\s*['"][^'"${}]{4,}['"]'''
+tags = ["password", "secret"]
+
+[[rules]]
+id = "custom-connection-string"
+description = "Detect hardcoded connection strings"
+regex = '''(?i)(postgresql|mysql|mongodb|redis):\/\/[^${}]+:[^${}]+@'''
+tags = ["connection-string"]
+
+# Allowlist: exclude test files, examples, and docs
+[allowlist]
+paths = [
+    '''\.env\.example''',
+    '''test_.*\.py''',
+    '''.*_test\.py''',
+    '''.*\.md''',
+    '''.*\.json''',
+    '''\.gitleaks\.toml''',
+]
+
+regexTarget = "line"

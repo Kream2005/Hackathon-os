@@ -7,18 +7,32 @@ scrape_configs:
     static_configs:
       - targets: ['alert-ingestion:8001']
     metrics_path: /metrics
+    scrape_interval: 10s
 
   - job_name: 'incident-management'
     static_configs:
       - targets: ['incident-management:8002']
     metrics_path: /metrics
+    scrape_interval: 10s
 
   - job_name: 'oncall-service'
     static_configs:
       - targets: ['oncall-service:8003']
     metrics_path: /metrics
+    scrape_interval: 10s
 
   - job_name: 'notification-service'
     static_configs:
       - targets: ['notification-service:8004']
     metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: 'web-ui'
+    static_configs:
+      - targets: ['web-ui:8080']
+    metrics_path: /metrics
+    scrape_interval: 15s
+
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['localhost:9090']

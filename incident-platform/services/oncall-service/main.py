@@ -1,0 +1,513 @@
+"""
+On-Call Service — Microservice de gestion des astreintes
+Port: 8003
+Responsable: Personne 2 (DevOps & Infra Master)
+"""
+
+import os
+import time
+import uuid
+from contextlib import asynccontextmanager
+from datetime import datetime, timezone
+from typing import List, Optional
+
+from fastapi import FastAPI, HTTPException, Query
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel, EmailStr, Field
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
+from starlette.responses import Response
+
+# ============================================
+# App Configuration
+# ============================================
+
+@asynccontextmanager
+async def lifespan(application: FastAPI):
+    """Lifespan event handler — seed default schedules on startup."""
+    await seed_default_schedules()
+    yield
+
+app = FastAPI(
+    title="On-Call Service",
+    description="Manages on-call schedules, rotations, and escalations",
+    version="1.0.0",
+    lifespan=lifespan,
+)
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# ============================================
+# Prometheus Metrics
+# ============================================
+REQUEST_COUNT = Counter(
+    "oncall_requests_total",
+    "Total HTTP requests to on-call service",
+    ["method", "endpoint", "status"],
+)
+REQUEST_LATENCY = Histogram(
+    "oncall_request_duration_seconds",
+    "Request latency in seconds",
+    ["method", "endpoint"],
+)
+NOTIFICATIONS_SENT = Counter(
+    "oncall_notifications_sent_total",
+    "Total notifications sent",
+    ["channel"],
+)
+ESCALATIONS_TOTAL = Counter(
+    "oncall_escalations_total",
+    "Total escalations triggered",
+    ["team"],
+)
+SCHEDULES_CREATED = Counter(
+    "oncall_schedules_created_total",
+    "Total schedules created",
+)
+ONCALL_LOOKUPS = Counter(
+    "oncall_lookups_total",
+    "Total on-call lookups performed",
+    ["team"],
+)
+HTTP_ERRORS = Counter(
+    "oncall_http_errors_total",
+    "Total HTTP error responses",
+    ["method", "endpoint", "status"],
+)
+ACTIVE_SCHEDULES = Gauge(
+    "oncall_active_schedules",
+    "Number of active on-call schedules",
+)
+OVERRIDES_ACTIVE = Gauge(
+    "oncall_overrides_active",
+    "Number of currently active overrides",
+)
+
+# ============================================
+# Data Models
+# ============================================
+class Member(BaseModel):
+    name: str = Field(..., min_length=1, max_length=255, description="Member name")
+    email: str = Field(..., min_length=1, max_length=255, description="Member email")
+    role: str = Field(..., pattern="^(primary|secondary)$", description="Role: primary or secondary")
+
+
+class ScheduleCreate(BaseModel):
+    team: str = Field(..., min_length=1, max_length=255, description="Team name")
+    rotation_type: str = Field(
+        default="weekly",
+        pattern="^(weekly|daily|biweekly)$",
+        description="Rotation type",
+    )
+    members: List[Member] = Field(..., min_length=1, description="List of on-call members")
+
+
+class ScheduleResponse(BaseModel):
+    id: str
+    team: str
+    rotation_type: str
+    members: List[dict]
+    created_at: str
+
+
+class OnCallCurrent(BaseModel):
+    team: str
+    primary: dict
+    secondary: Optional[dict] = None
+    schedule_id: str
+    rotation_type: str
+
+
+class EscalationRequest(BaseModel):
+    team: str = Field(..., min_length=1)
+    incident_id: str = Field(..., min_length=1)
+    reason: Optional[str] = "No acknowledgment within SLA"
+
+
+class EscalationResponse(BaseModel):
+    status: str
+    escalation_id: str
+    team: str
+    incident_id: str
+    escalated_to: Optional[dict] = None
+    message: str
+    timestamp: str
+
+
+class OverrideRequest(BaseModel):
+    team: str = Field(..., min_length=1)
+    user_name: str = Field(..., min_length=1)
+    user_email: str = Field(..., min_length=1)
+    reason: Optional[str] = "Manual override"
+
+
+# ============================================
+# In-Memory Storage
+# ============================================
+schedules_db: dict = {}
+overrides_db: dict = {}  # team -> override info
+escalation_log: list = []
+
+# ============================================
+# Startup: Seed default schedules
+# ============================================
+async def seed_default_schedules():
+    """Crée des schedules par défaut pour que le flux fonctionne dès le lancement."""
+    default_schedules = [
+        {
+            "team": "platform-engineering",
+            "rotation_type": "weekly",
+            "members": [
+                {"name": "Alice Martin", "email": "alice@company.com", "role": "primary"},
+                {"name": "Bob Dupont", "email": "bob@company.com", "role": "primary"},
+                {"name": "Carol Chen", "email": "carol@company.com", "role": "secondary"},
+            ],
+        },
+        {
+            "team": "backend",
+            "rotation_type": "weekly",
+            "members": [
+                {"name": "David Kumar", "email": "david@company.com", "role": "primary"},
+                {"name": "Eve Johnson", "email": "eve@company.com", "role": "secondary"},
+            ],
+        },
+        {
+            "team": "frontend",
+            "rotation_type": "daily",
+            "members": [
+                {"name": "Frank Wilson", "email": "frank@company.com", "role": "primary"},
+                {"name": "Grace Lee", "email": "grace@company.com", "role": "secondary"},
+            ],
+        },
+        {
+            "team": "infrastructure",
+            "rotation_type": "biweekly",
+            "members": [
+                {"name": "Hank Brown", "email": "hank@company.com", "role": "primary"},
+                {"name": "Ivy Davis", "email": "ivy@company.com", "role": "primary"},
+                {"name": "Jack White", "email": "jack@company.com", "role": "secondary"},
+            ],
+        },
+    ]
+
+    for schedule_data in default_schedules:
+        schedule_id = str(uuid.uuid4())
+        schedules_db[schedule_data["team"]] = {
+            "id": schedule_id,
+            "team": schedule_data["team"],
+            "rotation_type": schedule_data["rotation_type"],
+            "members": schedule_data["members"],
+            "created_at": datetime.now(timezone.utc).isoformat(),
+        }
+
+    print(f"✅ Seeded {len(default_schedules)} default on-call schedules")
+    ACTIVE_SCHEDULES.set(len(schedules_db))
+
+
+# ============================================
+# Health & Metrics Endpoints
+# ============================================
+@app.get("/health", tags=["System"])
+def health_check():
+    """Health check endpoint for Docker and orchestration."""
+    return {
+        "status": "ok",
+        "service": "oncall-service",
+        "version": "1.0.0",
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+        "schedules_count": len(schedules_db),
+    }
+
+
+@app.get("/metrics", tags=["System"])
+def prometheus_metrics():
+    """Expose Prometheus metrics."""
+    return Response(content=generate_latest(), media_type=CONTENT_TYPE_LATEST)
+
+
+# ============================================
+# Schedule Endpoints
+# ============================================
+@app.post("/api/v1/schedules", status_code=201, response_model=ScheduleResponse, tags=["Schedules"])
+def create_schedule(schedule: ScheduleCreate):
+    """Create a new on-call schedule for a team."""
+    start_time = time.time()
+
+    # Validate at least one primary member
+    primary_members = [m for m in schedule.members if m.role == "primary"]
+    if not primary_members:
+        REQUEST_COUNT.labels(method="POST", endpoint="/api/v1/schedules", status="400").inc()
+        raise HTTPException(
+            status_code=400,
+            detail="At least one member with role 'primary' is required",
+        )
+
+    schedule_id = str(uuid.uuid4())
+    schedule_record = {
+        "id": schedule_id,
+        "team": schedule.team,
+        "rotation_type": schedule.rotation_type,
+        "members": [m.model_dump() for m in schedule.members],
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    schedules_db[schedule.team] = schedule_record
+
+    SCHEDULES_CREATED.inc()
+    ACTIVE_SCHEDULES.set(len(schedules_db))
+    REQUEST_COUNT.labels(method="POST", endpoint="/api/v1/schedules", status="201").inc()
+    REQUEST_LATENCY.labels(method="POST", endpoint="/api/v1/schedules").observe(time.time() - start_time)
+
+    print(f"📋 Schedule created: team={schedule.team}, members={len(schedule.members)}")
+    return schedule_record
+
+
+@app.get("/api/v1/schedules", tags=["Schedules"])
+def list_schedules():
+    """List all on-call schedules."""
+    start_time = time.time()
+    result = list(schedules_db.values())
+    REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/schedules", status="200").inc()
+    REQUEST_LATENCY.labels(method="GET", endpoint="/api/v1/schedules").observe(time.time() - start_time)
+    return result
+
+
+@app.get("/api/v1/schedules/{team}", response_model=ScheduleResponse, tags=["Schedules"])
+def get_schedule(team: str):
+    """Get a specific team's schedule."""
+    start_time = time.time()
+
+    if team not in schedules_db:
+        REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/schedules/{team}", status="404").inc()
+        raise HTTPException(status_code=404, detail=f"No schedule found for team '{team}'")
+
+    REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/schedules/{team}", status="200").inc()
+    REQUEST_LATENCY.labels(method="GET", endpoint="/api/v1/schedules/{team}").observe(time.time() - start_time)
+    return schedules_db[team]
+
+
+@app.delete("/api/v1/schedules/{team}", tags=["Schedules"])
+def delete_schedule(team: str):
+    """Delete a team's schedule."""
+    if team not in schedules_db:
+        raise HTTPException(status_code=404, detail=f"No schedule found for team '{team}'")
+
+    del schedules_db[team]
+    # Also remove any override for this team
+    overrides_db.pop(team, None)
+    ACTIVE_SCHEDULES.set(len(schedules_db))
+    OVERRIDES_ACTIVE.set(len(overrides_db))
+    return {"status": "deleted", "team": team}
+
+
+# ============================================
+# On-Call Current Endpoint
+# ============================================
+@app.get("/api/v1/oncall/current", response_model=OnCallCurrent, tags=["On-Call"])
+def get_current_oncall(team: str = Query(..., description="Team name to query")):
+    """
+    Get the current on-call engineer for a team.
+    Used by incident-management to assign incidents.
+    Rotation logic: week_of_year (or day_of_year) % number_of_primary_members.
+    """
+    start_time = time.time()
+
+    if team not in schedules_db:
+        REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/oncall/current", status="404").inc()
+        raise HTTPException(
+            status_code=404,
+            detail=f"No schedule found for team '{team}'",
+        )
+
+    ONCALL_LOOKUPS.labels(team=team).inc()
+
+    # Check for active override
+    if team in overrides_db:
+        override = overrides_db[team]
+        schedule = schedules_db[team]
+        result = {
+            "team": team,
+            "primary": {
+                "name": override["user_name"],
+                "email": override["user_email"],
+                "override": True,
+                "reason": override.get("reason", "Manual override"),
+            },
+            "schedule_id": schedule["id"],
+            "rotation_type": schedule["rotation_type"],
+        }
+        REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/oncall/current", status="200").inc()
+        REQUEST_LATENCY.labels(method="GET", endpoint="/api/v1/oncall/current").observe(time.time() - start_time)
+        return result
+
+    schedule = schedules_db[team]
+    members = schedule["members"]
+
+    primary_members = [m for m in members if m["role"] == "primary"]
+    secondary_members = [m for m in members if m["role"] == "secondary"]
+
+    if not primary_members:
+        REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/oncall/current", status="500").inc()
+        raise HTTPException(
+            status_code=500,
+            detail=f"No primary on-call members configured for team '{team}'",
+        )
+
+    # Rotation logic based on rotation_type
+    now = datetime.now(timezone.utc)
+    if schedule["rotation_type"] == "daily":
+        rotation_index = now.timetuple().tm_yday  # day of year
+    elif schedule["rotation_type"] == "biweekly":
+        rotation_index = now.isocalendar()[1] // 2  # bi-weekly
+    else:  # weekly (default)
+        rotation_index = now.isocalendar()[1]  # week of year
+
+    primary_index = rotation_index % len(primary_members)
+    current_primary = primary_members[primary_index]
+
+    result = {
+        "team": team,
+        "primary": {
+            "name": current_primary["name"],
+            "email": current_primary["email"],
+        },
+        "schedule_id": schedule["id"],
+        "rotation_type": schedule["rotation_type"],
+    }
+
+    if secondary_members:
+        secondary_index = rotation_index % len(secondary_members)
+        result["secondary"] = {
+            "name": secondary_members[secondary_index]["name"],
+            "email": secondary_members[secondary_index]["email"],
+        }
+
+    REQUEST_COUNT.labels(method="GET", endpoint="/api/v1/oncall/current", status="200").inc()
+    REQUEST_LATENCY.labels(method="GET", endpoint="/api/v1/oncall/current").observe(time.time() - start_time)
+    return result
+
+
+# ============================================
+# Override Endpoint
+# ============================================
+@app.post("/api/v1/oncall/override", tags=["On-Call"])
+def set_override(override: OverrideRequest):
+    """Temporarily override the on-call for a team."""
+    if override.team not in schedules_db:
+        raise HTTPException(status_code=404, detail=f"No schedule found for team '{override.team}'")
+
+    overrides_db[override.team] = {
+        "user_name": override.user_name,
+        "user_email": override.user_email,
+        "reason": override.reason,
+        "created_at": datetime.now(timezone.utc).isoformat(),
+    }
+    OVERRIDES_ACTIVE.set(len(overrides_db))
+
+    print(f"🔄 Override set: team={override.team}, user={override.user_name}")
+    return {
+        "status": "override_set",
+        "team": override.team,
+        "overridden_to": override.user_name,
+    }
+
+
+@app.delete("/api/v1/oncall/override/{team}", tags=["On-Call"])
+def remove_override(team: str):
+    """Remove an active override for a team."""
+    if team not in overrides_db:
+        raise HTTPException(status_code=404, detail=f"No active override for team '{team}'")
+
+    del overrides_db[team]
+    OVERRIDES_ACTIVE.set(len(overrides_db))
+    return {"status": "override_removed", "team": team}
+
+
+# ============================================
+# Escalation Endpoint
+# ============================================
+@app.post("/api/v1/escalate", response_model=EscalationResponse, tags=["Escalation"])
+def escalate(data: EscalationRequest):
+    """
+    Trigger an escalation for an incident.
+    Escalates to the secondary on-call member if available.
+    """
+    start_time = time.time()
+
+    ESCALATIONS_TOTAL.labels(team=data.team).inc()
+    NOTIFICATIONS_SENT.labels(channel="console").inc()
+
+    escalation_id = str(uuid.uuid4())
+
+    # Try to find secondary on-call for escalation
+    escalated_to = None
+    if data.team in schedules_db:
+        schedule = schedules_db[data.team]
+        secondary_members = [m for m in schedule["members"] if m["role"] == "secondary"]
+        if secondary_members:
+            now = datetime.now(timezone.utc)
+            rotation_index = now.isocalendar()[1]
+            secondary_index = rotation_index % len(secondary_members)
+            escalated_to = {
+                "name": secondary_members[secondary_index]["name"],
+                "email": secondary_members[secondary_index]["email"],
+            }
+
+    escalation_record = {
+        "escalation_id": escalation_id,
+        "team": data.team,
+        "incident_id": data.incident_id,
+        "reason": data.reason,
+        "escalated_to": escalated_to,
+        "timestamp": datetime.now(timezone.utc).isoformat(),
+    }
+    escalation_log.append(escalation_record)
+
+    print(f"🚨 ESCALATION: team={data.team}, incident={data.incident_id}, reason={data.reason}")
+    if escalated_to:
+        print(f"   → Escalated to: {escalated_to['name']} ({escalated_to['email']})")
+
+    REQUEST_COUNT.labels(method="POST", endpoint="/api/v1/escalate", status="200").inc()
+    REQUEST_LATENCY.labels(method="POST", endpoint="/api/v1/escalate").observe(time.time() - start_time)
+
+    return {
+        "status": "escalated",
+        "escalation_id": escalation_id,
+        "team": data.team,
+        "incident_id": data.incident_id,
+        "escalated_to": escalated_to,
+        "message": f"Escalation triggered for team '{data.team}' — incident {data.incident_id}",
+        "timestamp": escalation_record["timestamp"],
+    }
+
+
+@app.get("/api/v1/escalations", tags=["Escalation"])
+def list_escalations(team: Optional[str] = None, limit: int = 50):
+    """List escalation history, optionally filtered by team."""
+    if team:
+        filtered = [e for e in escalation_log if e["team"] == team]
+    else:
+        filtered = escalation_log
+
+    return filtered[-limit:]
+
+
+# ============================================
+# Teams Overview
+# ============================================
+@app.get("/api/v1/teams", tags=["Teams"])
+def list_teams():
+    """List all teams with on-call schedules."""
+    return [
+        {
+            "team": team,
+            "members_count": len(schedule["members"]),
+            "rotation_type": schedule["rotation_type"],
+            "has_override": team in overrides_db,
+        }
+        for team, schedule in schedules_db.items()
+    ]
