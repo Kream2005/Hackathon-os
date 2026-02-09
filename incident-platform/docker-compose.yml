@@ -34,10 +34,12 @@ services:
         condition: service_healthy
     networks:
       - incident-platform
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
       timeout: 5s
+      start_period: 15s
       retries: 3
 
   # ---- INCIDENT MANAGEMENT SERVICE ----
@@ -54,10 +56,12 @@ services:
         condition: service_healthy
     networks:
       - incident-platform
+    restart: unless-stopped
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
       interval: 30s
       timeout: 5s
+      start_period: 15s
       retries: 3
 
   # ---- ON-CALL SERVICE (Person 2) ----

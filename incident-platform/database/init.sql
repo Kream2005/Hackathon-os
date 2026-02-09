@@ -1,53 +1,129 @@
--- ============================================
--- INCIDENT PLATFORM DATABASE SCHEMA
--- ============================================
+-- ============================================================
+-- INCIDENT PLATFORM — DATABASE SCHEMA
+-- Designed for a multi-service incident management platform.
+-- Tables: incidents (core), alerts, incident_notes,
+--         incident_timeline (audit trail for every state change)
+-- ============================================================
 
--- Alerts table
-CREATE TABLE IF NOT EXISTS alerts (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    service VARCHAR(255) NOT NULL,
-    severity VARCHAR(20) NOT NULL CHECK (severity IN ('critical','high','medium','low')),
-    message TEXT NOT NULL,
-    labels JSONB DEFAULT '{}',
-    timestamp TIMESTAMPTZ NOT NULL,
-    incident_id UUID,
-    created_at TIMESTAMPTZ DEFAULT NOW()
-);
+-- Enable the pgcrypto extension (gen_random_uuid)
+CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 
--- Incidents table
+-- -----------------------------------------------------------
+-- 1. INCIDENTS  —  the central entity
+-- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS incidents (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    title VARCHAR(500) NOT NULL,
-    service VARCHAR(255) NOT NULL,
-    severity VARCHAR(20) NOT NULL CHECK (severity IN ('critical','high','medium','low')),
-    status VARCHAR(20) DEFAULT 'open' CHECK (status IN ('open','acknowledged','in_progress','resolved')),
-    assigned_to VARCHAR(255),
-    created_at TIMESTAMPTZ DEFAULT NOW(),
+    id              UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    title           VARCHAR(500)  NOT NULL,
+    service         VARCHAR(255)  NOT NULL,
+    severity        VARCHAR(20)   NOT NULL
+                        CHECK (severity IN ('critical','high','medium','low')),
+    status          VARCHAR(20)   NOT NULL DEFAULT 'open'
+                        CHECK (status IN ('open','acknowledged','in_progress','resolved')),
+    assigned_to     VARCHAR(255),
+    alert_count     INTEGER       NOT NULL DEFAULT 0,      -- denormalised for fast dashboard reads
+    created_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
+    updated_at      TIMESTAMPTZ   NOT NULL DEFAULT NOW(),
     acknowledged_at TIMESTAMPTZ,
-    resolved_at TIMESTAMPTZ,
-    mtta_seconds FLOAT,
-    mttr_seconds FLOAT
+    resolved_at     TIMESTAMPTZ,
+    mtta_seconds    DOUBLE PRECISION,                       -- Mean-Time-To-Acknowledge
+    mttr_seconds    DOUBLE PRECISION                        -- Mean-Time-To-Resolve
 );
 
--- Incident notes table
+COMMENT ON TABLE  incidents              IS 'Core incident records with lifecycle timestamps';
+COMMENT ON COLUMN incidents.alert_count  IS 'Denormalised count of correlated alerts';
+COMMENT ON COLUMN incidents.mtta_seconds IS 'Seconds between created_at and acknowledged_at';
+COMMENT ON COLUMN incidents.mttr_seconds IS 'Seconds between created_at and resolved_at';
+
+-- -----------------------------------------------------------
+-- 2. ALERTS  —  raw signals correlated into incidents
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS alerts (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    service     VARCHAR(255)  NOT NULL,
+    severity    VARCHAR(20)   NOT NULL
+                    CHECK (severity IN ('critical','high','medium','low')),
+    message     TEXT          NOT NULL,
+    source      VARCHAR(255)  DEFAULT 'api',               -- origin system (prometheus, grafana, api…)
+    labels      JSONB         NOT NULL DEFAULT '{}',
+    fingerprint VARCHAR(64),                                -- optional dedup key
+    timestamp   TIMESTAMPTZ   NOT NULL,
+    incident_id UUID          REFERENCES incidents(id) ON DELETE SET NULL,
+    created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
+
+COMMENT ON TABLE  alerts             IS 'Incoming alert signals from monitoring systems';
+COMMENT ON COLUMN alerts.fingerprint IS 'SHA-256 based dedup key (service+severity+message hash)';
+
+-- -----------------------------------------------------------
+-- 3. INCIDENT NOTES  —  human / system annotations
+-- -----------------------------------------------------------
 CREATE TABLE IF NOT EXISTS incident_notes (
-    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
-    incident_id UUID REFERENCES incidents(id) ON DELETE CASCADE,
-    author VARCHAR(255),
-    content TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT NOW()
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    incident_id UUID          NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    author      VARCHAR(255)  NOT NULL DEFAULT 'system',
+    content     TEXT          NOT NULL,
+    created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
 );
 
--- Add foreign key for alerts -> incidents
-ALTER TABLE alerts
-    ADD CONSTRAINT fk_alerts_incident
-    FOREIGN KEY (incident_id) REFERENCES incidents(id) ON DELETE SET NULL;
+-- -----------------------------------------------------------
+-- 4. INCIDENT TIMELINE  —  immutable audit log of every event
+-- -----------------------------------------------------------
+CREATE TABLE IF NOT EXISTS incident_timeline (
+    id          UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    incident_id UUID          NOT NULL REFERENCES incidents(id) ON DELETE CASCADE,
+    event_type  VARCHAR(50)   NOT NULL
+                    CHECK (event_type IN (
+                        'created','acknowledged','in_progress','resolved',
+                        'reopened','assigned','escalated','note_added','alert_correlated'
+                    )),
+    actor       VARCHAR(255)  NOT NULL DEFAULT 'system',
+    detail      JSONB         DEFAULT '{}',
+    created_at  TIMESTAMPTZ   NOT NULL DEFAULT NOW()
+);
 
--- Indexes for performance
-CREATE INDEX IF NOT EXISTS idx_alerts_service_severity ON alerts(service, severity);
-CREATE INDEX IF NOT EXISTS idx_alerts_incident_id ON alerts(incident_id);
-CREATE INDEX IF NOT EXISTS idx_alerts_created_at ON alerts(created_at);
-CREATE INDEX IF NOT EXISTS idx_incidents_status ON incidents(status);
-CREATE INDEX IF NOT EXISTS idx_incidents_service ON incidents(service);
-CREATE INDEX IF NOT EXISTS idx_incidents_created_at ON incidents(created_at);
-CREATE INDEX IF NOT EXISTS idx_incident_notes_incident_id ON incident_notes(incident_id);
+COMMENT ON TABLE incident_timeline IS 'Immutable event log for every incident state change';
+
+-- -----------------------------------------------------------
+-- INDEXES  —  covering the hot-path queries
+-- -----------------------------------------------------------
+
+-- Alert correlation: find open incident for same service+severity in last 5 min
+CREATE INDEX IF NOT EXISTS idx_alerts_correlation
+    ON alerts (service, severity, created_at DESC)
+    WHERE incident_id IS NOT NULL;
+
+-- Incident listing / dashboard filters
+CREATE INDEX IF NOT EXISTS idx_incidents_status          ON incidents (status);
+CREATE INDEX IF NOT EXISTS idx_incidents_service         ON incidents (service);
+CREATE INDEX IF NOT EXISTS idx_incidents_severity        ON incidents (severity);
+CREATE INDEX IF NOT EXISTS idx_incidents_created_at      ON incidents (created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_incidents_status_severity  ON incidents (status, severity);
+
+-- Correlation lookup: open incidents for a given service+severity in time window
+CREATE INDEX IF NOT EXISTS idx_incidents_correlation
+    ON incidents (service, severity, created_at DESC)
+    WHERE status != 'resolved';
+
+-- Alert → incident join
+CREATE INDEX IF NOT EXISTS idx_alerts_incident_id        ON alerts (incident_id);
+CREATE INDEX IF NOT EXISTS idx_alerts_created_at         ON alerts (created_at DESC);
+
+-- Notes & timeline fast lookups
+CREATE INDEX IF NOT EXISTS idx_incident_notes_incident   ON incident_notes (incident_id, created_at);
+CREATE INDEX IF NOT EXISTS idx_timeline_incident         ON incident_timeline (incident_id, created_at);
+
+-- -----------------------------------------------------------
+-- FUNCTION: auto-update updated_at on incidents
+-- -----------------------------------------------------------
+CREATE OR REPLACE FUNCTION fn_set_updated_at()
+RETURNS TRIGGER AS $$
+BEGIN
+    NEW.updated_at = NOW();
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_incidents_updated_at
+    BEFORE UPDATE ON incidents
+    FOR EACH ROW
+    EXECUTE FUNCTION fn_set_updated_at();
