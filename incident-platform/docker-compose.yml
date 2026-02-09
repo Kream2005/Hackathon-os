@@ -1,0 +1,150 @@
+version: '3.8'
+
+services:
+  # ---- DATABASE ----
+  database:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - db-data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    ports:
+      - "5432:5432"
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ---- ALERT INGESTION SERVICE ----
+  alert-ingestion:
+    build: ./services/alert-ingestion
+    ports:
+      - "8001:8001"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      INCIDENT_MANAGEMENT_URL: http://incident-management:8002
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---- INCIDENT MANAGEMENT SERVICE ----
+  incident-management:
+    build: ./services/incident-management
+    ports:
+      - "8002:8002"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      ONCALL_SERVICE_URL: http://oncall-service:8003
+      NOTIFICATION_SERVICE_URL: http://notification-service:8004
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---- ON-CALL SERVICE (Person 2) ----
+  oncall-service:
+    build: ./services/oncall-service
+    ports:
+      - "8003:8003"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+    depends_on:
+      database:
+        condition: service_healthy
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---- NOTIFICATION SERVICE (Person 3 - Optional) ----
+  notification-service:
+    build: ./services/notification-service
+    ports:
+      - "8004:8004"
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8004/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---- WEB UI (Person 3) ----
+  web-ui:
+    build: ./services/web-ui
+    ports:
+      - "8080:8080"
+    depends_on:
+      - alert-ingestion
+      - incident-management
+      - oncall-service
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  # ---- PROMETHEUS ----
+  prometheus:
+    image: prom/prometheus:latest
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml
+      - prometheus-data:/prometheus
+    ports:
+      - "9090:9090"
+    networks:
+      - incident-platform
+    command:
+      - '--config.file=/etc/prometheus/prometheus.yml'
+      - '--storage.tsdb.path=/prometheus'
+
+  # ---- GRAFANA ----
+  grafana:
+    image: grafana/grafana:latest
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+    volumes:
+      - grafana-data:/var/lib/grafana
+      - ./monitoring/grafana-provisioning/dashboards:/etc/grafana/provisioning/dashboards
+      - ./monitoring/grafana-provisioning/datasources:/etc/grafana/provisioning/datasources
+      - ./monitoring/grafana-dashboards:/var/lib/grafana/dashboards
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    networks:
+      - incident-platform
+
+volumes:
+  db-data:
+  prometheus-data:
+  grafana-data:
+
+networks:
+  incident-platform:
+    driver: bridge
