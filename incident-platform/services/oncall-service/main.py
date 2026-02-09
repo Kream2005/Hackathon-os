@@ -14,7 +14,7 @@ from typing import List, Optional
 from fastapi import FastAPI, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, EmailStr, Field
-from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
+from prometheus_client import Counter, Histogram, Gauge, generate_latest, CONTENT_TYPE_LATEST
 from starlette.responses import Response
 
 # ============================================
@@ -73,6 +73,19 @@ ONCALL_LOOKUPS = Counter(
     "oncall_lookups_total",
     "Total on-call lookups performed",
     ["team"],
+)
+HTTP_ERRORS = Counter(
+    "oncall_http_errors_total",
+    "Total HTTP error responses",
+    ["method", "endpoint", "status"],
+)
+ACTIVE_SCHEDULES = Gauge(
+    "oncall_active_schedules",
+    "Number of active on-call schedules",
+)
+OVERRIDES_ACTIVE = Gauge(
+    "oncall_overrides_active",
+    "Number of currently active overrides",
 )
 
 # ============================================
@@ -193,6 +206,7 @@ async def seed_default_schedules():
         }
 
     print(f"✅ Seeded {len(default_schedules)} default on-call schedules")
+    ACTIVE_SCHEDULES.set(len(schedules_db))
 
 
 # ============================================
@@ -244,6 +258,7 @@ def create_schedule(schedule: ScheduleCreate):
     schedules_db[schedule.team] = schedule_record
 
     SCHEDULES_CREATED.inc()
+    ACTIVE_SCHEDULES.set(len(schedules_db))
     REQUEST_COUNT.labels(method="POST", endpoint="/api/v1/schedules", status="201").inc()
     REQUEST_LATENCY.labels(method="POST", endpoint="/api/v1/schedules").observe(time.time() - start_time)
 
@@ -284,6 +299,8 @@ def delete_schedule(team: str):
     del schedules_db[team]
     # Also remove any override for this team
     overrides_db.pop(team, None)
+    ACTIVE_SCHEDULES.set(len(schedules_db))
+    OVERRIDES_ACTIVE.set(len(overrides_db))
     return {"status": "deleted", "team": team}
 
 
@@ -389,6 +406,7 @@ def set_override(override: OverrideRequest):
         "reason": override.reason,
         "created_at": datetime.now(timezone.utc).isoformat(),
     }
+    OVERRIDES_ACTIVE.set(len(overrides_db))
 
     print(f"🔄 Override set: team={override.team}, user={override.user_name}")
     return {
@@ -405,6 +423,7 @@ def remove_override(team: str):
         raise HTTPException(status_code=404, detail=f"No active override for team '{team}'")
 
     del overrides_db[team]
+    OVERRIDES_ACTIVE.set(len(overrides_db))
     return {"status": "override_removed", "team": team}
 
 

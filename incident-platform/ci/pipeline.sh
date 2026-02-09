@@ -114,7 +114,7 @@ print_summary() {
 echo -e "${BOLD}${BLUE}"
 echo "  ╔══════════════════════════════════════╗"
 echo "  ║     INCIDENT PLATFORM CI/CD          ║"
-echo "  ║     Pipeline v1.0.0                  ║"
+echo "  ║     Pipeline v2.0.0 (8 stages)       ║"
 echo "  ╚══════════════════════════════════════╝"
 echo -e "${NC}"
 echo -e "  📅 $(date)"
@@ -130,8 +130,10 @@ run_stage 1 "Code Quality (Lint)"       "quality.sh"
 run_stage 2 "Security Scan"             "security.sh"
 run_stage 3 "Tests & Coverage"          "test.sh"
 run_stage 4 "Build Container Images"    "build.sh"
-run_stage 5 "Deploy (docker compose)"   "deploy.sh"
-run_stage 6 "Post-Deploy Verification"  "verify.sh"
+run_stage 5 "Image Vulnerability Scan"  "scan.sh"
+run_stage 6 "Deploy (docker compose)"   "deploy.sh"
+run_stage 7 "Post-Deploy Verification"  "verify.sh"
+run_stage 8 "Integration Tests (E2E)"   "integration-test.sh"
 
 # Print final summary
 print_summary
