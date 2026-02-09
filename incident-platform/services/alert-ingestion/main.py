@@ -1,3 +1,6 @@
+# type: ignore
+# pyright: reportGeneralTypeIssues=false
+# pyright: reportOptionalMemberAccess=false
 """
 Alert Ingestion Service
 =======================

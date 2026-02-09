@@ -215,7 +215,8 @@ class TestUpdateIncident:
         updated_row = _incident_row(iid=iid, status="acknowledged", created_at=created, acknowledged_at=NOW, mtta=300.0)
         _mock_conn.execute.side_effect = [
             MagicMock(fetchone=MagicMock(return_value=row)),        # SELECT current
-            None, None, None,                                       # INSERT timeline, UPDATE, etc
+            None,                                                   # INSERT timeline
+            None,                                                   # UPDATE
             MagicMock(fetchone=MagicMock(return_value=updated_row)), # SELECT updated
         ]
         r = client.patch(f"/api/v1/incidents/{iid}", json={"status": "acknowledged"})
@@ -229,8 +230,9 @@ class TestUpdateIncident:
         resolved_row = _incident_row(iid=iid, status="resolved", created_at=created, resolved_at=NOW, mttr=600.0)
         _mock_conn.execute.side_effect = [
             MagicMock(fetchone=MagicMock(return_value=row)),
-            None, None, None, None,
-            MagicMock(fetchone=MagicMock(return_value=resolved_row)),
+            None,                                                   # INSERT timeline
+            None,                                                   # UPDATE
+            MagicMock(fetchone=MagicMock(return_value=resolved_row)), # SELECT updated
         ]
         r = client.patch(f"/api/v1/incidents/{iid}", json={"status": "resolved"})
         assert r.status_code == 200
