@@ -1,5 +1,4 @@
 # Environment variables (NEVER commit secrets)
-.env
 
 # Python
 __pycache__/
