@@ -1,293 +1,247 @@
-# 🚨 Incident Platform — Mini PagerDuty Clone
+# Incident & On-Call Management Platform
 
-A complete incident management platform built with microservices architecture, featuring alert ingestion, incident management, on-call scheduling, and real-time monitoring.
+A production-ready incident management and on-call platform built with microservices architecture, Docker Compose orchestration, and full DevOps automation.
 
-## 📋 Table of Contents
-
-- [Architecture](#-architecture)
-- [Quick Start](#-quick-start)
-- [Services](#-services)
-- [API Endpoints](#-api-endpoints)
-- [CI/CD Pipeline](#-cicd-pipeline)
-- [Monitoring & Dashboards](#-monitoring--dashboards)
-- [Security](#-security)
-- [Development](#-development)
-
----
-
-## 🏗️ Architecture
+## Architecture
 
 ```
-                    ┌──────────────────┐
-                    │     Web UI       │
-                    │   :8080          │
-                    └──────┬───────────┘
-                           │
-              ┌────────────┼────────────┐
-              │            │            │
-    ┌─────────▼──┐  ┌──────▼─────┐  ┌──▼──────────┐
-    │   Alert    │  │  Incident  │  │  On-Call     │
-    │ Ingestion  │  │ Management │  │  Service     │
-    │  :8001     │  │  :8002     │  │  :8003       │
-    └─────┬──────┘  └──────┬─────┘  └──────────────┘
-          │                │
-          │         ┌──────▼─────┐
-          │         │Notification│
-          │         │  Service   │
-          │         │  :8004     │
-          │         └────────────┘
-          │
-    ┌─────▼──────┐
-    │ PostgreSQL │
-    │  :5432     │
-    └────────────┘
-
-    ┌────────────┐    ┌────────────┐
-    │ Prometheus │───▶│  Grafana   │
-    │  :9090     │    │  :3000     │
-    └────────────┘    └────────────┘
+                    ┌──────────────┐
+                    │   Web UI     │ :8080
+                    │  (Nginx)     │
+                    └──────┬───────┘
+                           │ HTTP (browser → localhost)
+         ┌─────────────────┼─────────────────┐
+         │                 │                  │
+         ▼                 ▼                  ▼
+┌─────────────────┐ ┌──────────────┐ ┌──────────────────┐
+│ Alert Ingestion │ │  Incident    │ │  On-Call &        │
+│   Service       │ │  Management  │ │  Escalation       │
+│   :8001         │─│  :8002       │─│  :8003            │
+└────────┬────────┘ └──────┬───────┘ └──────────────────┘
+         │                 │                  │
+         │                 ▼                  │
+         │         ┌──────────────┐           │
+         │         │ Notification │           │
+         │         │  Service     │           │
+         │         │  :8004       │           │
+         │         └──────────────┘           │
+         │                                    │
+         ▼                                    ▼
+┌─────────────────────────────────────────────────────┐
+│                PostgreSQL :5432                       │
+└─────────────────────────────────────────────────────┘
+         │
+         ▼
+┌──────────────┐     ┌──────────────┐
+│  Prometheus  │────▶│   Grafana    │
+│  :9090       │     │   :3000      │
+└──────────────┘     └──────────────┘
 ```
 
-**Tech Stack:**
-- **Language:** Python 3.11 + FastAPI
-- **Database:** PostgreSQL 15
-- **Monitoring:** Prometheus + Grafana
-- **Containers:** Docker with multi-stage builds
-- **Orchestration:** Docker Compose
+### Services
 
----
+| Service              | Port | Tech               | Description                    |
+| -------------------- | ---- | ------------------ | ------------------------------ |
+| Alert Ingestion      | 8001 | Python FastAPI     | Receives & correlates alerts   |
+| Incident Management  | 8002 | Python FastAPI     | Incident lifecycle & MTTA/MTTR |
+| On-Call Service      | 8003 | Python FastAPI     | Schedules & escalation         |
+| Notification Service | 8004 | Python FastAPI     | Mock notification delivery     |
+| Web UI               | 8080 | HTML/JS + Nginx    | Dashboard & incident mgmt      |
+| PostgreSQL           | 5432 | postgres:15-alpine | Persistent data store          |
+| Prometheus           | 9090 | prom/prometheus    | Metrics collection             |
+| Grafana              | 3000 | grafana/grafana    | Metrics dashboards             |
 
-## 🚀 Quick Start
-
-### Prerequisites
-- Docker & Docker Compose
-- Git
-
-### Launch
+## Quick Start
 
 ```bash
-# 1. Clone the repository
+# Clone
 git clone <repo-url>
 cd incident-platform
 
-# 2. Configure environment
-cp .env.example .env
-# Edit .env with your values
-
-# 3. Start everything (one command!)
-docker compose up -d
-
-# 4. Verify
-docker compose ps
-```
-
-### Access Points
-
-| Service | URL | Credentials |
-|---------|-----|-------------|
-| Web UI | http://localhost:8080 | — |
-| Alert Ingestion API | http://localhost:8001/docs | — |
-| Incident Management API | http://localhost:8002/docs | — |
-| On-Call Service API | http://localhost:8003/docs | — |
-| Notification Service API | http://localhost:8004/docs | — |
-| Prometheus | http://localhost:9090 | — |
-| Grafana | http://localhost:3000 | admin / admin |
-
----
-
-## 🔧 Services
-
-### Alert Ingestion (Port 8001)
-Receives alerts from external monitoring systems, correlates them, and creates incidents.
-
-### Incident Management (Port 8002)
-Manages the full incident lifecycle: creation → acknowledgment → resolution. Calculates MTTA and MTTR metrics.
-
-### On-Call Service (Port 8003)
-Manages on-call schedules and rotations. Determines who is on-call at any given time. Supports:
-- **Weekly / Daily / Biweekly** rotations
-- **Manual overrides** for one-off changes
-- **Escalation** to secondary on-call
-
-### Notification Service (Port 8004)
-Simulates sending notifications via console logging (email, Slack, SMS simulation).
-
-### Web UI (Port 8080)
-Dashboard providing an overview of all services and their health status.
-
----
-
-## 📡 API Endpoints
-
-### Alert Ingestion (:8001)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| GET | `/metrics` | Prometheus metrics |
-| POST | `/api/v1/alerts` | Receive a new alert |
-| GET | `/api/v1/alerts` | List all alerts |
-
-### Incident Management (:8002)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| GET | `/metrics` | Prometheus metrics |
-| POST | `/api/v1/incidents` | Create incident |
-| GET | `/api/v1/incidents` | List incidents |
-| PATCH | `/api/v1/incidents/{id}/acknowledge` | Acknowledge incident |
-| PATCH | `/api/v1/incidents/{id}/resolve` | Resolve incident |
-| GET | `/api/v1/incidents/stats` | Incident statistics |
-
-### On-Call Service (:8003)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| GET | `/metrics` | Prometheus metrics |
-| POST | `/api/v1/schedules` | Create on-call schedule |
-| GET | `/api/v1/schedules` | List all schedules |
-| GET | `/api/v1/schedules/{team}` | Get team schedule |
-| DELETE | `/api/v1/schedules/{team}` | Delete schedule |
-| GET | `/api/v1/oncall/current?team=X` | Get current on-call |
-| POST | `/api/v1/oncall/override` | Set manual override |
-| DELETE | `/api/v1/oncall/override/{team}` | Remove override |
-| POST | `/api/v1/escalate` | Trigger escalation |
-| GET | `/api/v1/escalations` | List escalation history |
-| GET | `/api/v1/teams` | List all teams |
-
-### Notification Service (:8004)
-
-| Method | Endpoint | Description |
-|--------|----------|-------------|
-| GET | `/health` | Health check |
-| GET | `/metrics` | Prometheus metrics |
-| POST | `/api/v1/notify` | Send notification |
-| GET | `/api/v1/notifications` | List notifications |
-
----
-
-## 🔄 CI/CD Pipeline
-
-The pipeline runs with a single command and executes **6 stages** sequentially:
-
-```bash
-./run-pipeline.sh
-# or
-cd ci && bash pipeline.sh
-```
-
-### Pipeline Stages
-
-| Stage | Script | Description |
-|-------|--------|-------------|
-| 1 | `ci/quality.sh` | **Code Quality**: Ruff/Flake8 linting + syntax check |
-| 2 | `ci/security.sh` | **Security Scan**: Secret detection, Dockerfile audit, .gitignore check |
-| 3 | `ci/test.sh` | **Tests & Coverage**: pytest with ≥60% coverage requirement |
-| 4 | `ci/build.sh` | **Build**: Docker images with Git SHA tagging |
-| 5 | `ci/deploy.sh` | **Deploy**: `docker compose up -d` |
-| 6 | `ci/verify.sh` | **Verification**: Health checks + smoke test (end-to-end) |
-
-The pipeline outputs **colorized results** with timing for each stage and a final summary.
-
----
-
-## 📊 Monitoring & Dashboards
-
-### Prometheus
-- Scrapes all 5 services every 10-15 seconds
-- Access targets: http://localhost:9090/targets
-- All services expose `/metrics` in Prometheus text format
-
-### Grafana Dashboards (auto-provisioned)
-
-**Dashboard 1 — Incident Overview:**
-- Open incidents counter
-- MTTA / MTTR gauges
-- Alerts received over time (rate graph)
-- Incidents by severity (bar gauge)
-- Incidents by status (pie chart)
-- Service request rates
-
-**Dashboard 2 — SRE Performance:**
-- MTTA / MTTR trends over time (with P95)
-- Incident volume by service
-- Request latency distribution
-- Escalations & notifications counters
-- On-call lookups by team
-- Service uptime (UP/DOWN timeline)
-
----
-
-## 🔒 Security
-
-| Measure | Implementation |
-|---------|---------------|
-| **No hardcoded secrets** | All sensitive values in `.env` (not committed) |
-| **Non-root containers** | All Dockerfiles use `USER appuser` |
-| **Multi-stage builds** | Smaller images, no build tools in production |
-| **Secret scanning** | Gitleaks config + CI pipeline check |
-| **CORS configured** | All services accept cross-origin requests |
-| **.gitignore** | `.env`, `__pycache__`, `node_modules`, coverage reports |
-| **Docker healthchecks** | Every container has `HEALTHCHECK` |
-
----
-
-## 🧪 Development
-
-### Run Tests Locally
-
-```bash
-cd services/oncall-service
-pip install -r requirements.txt
-pytest test_main.py --cov=main --cov-report=term-missing -v
-```
-
-### Run a Single Service
-
-```bash
-cd services/oncall-service
-pip install -r requirements.txt
-uvicorn main:app --host 0.0.0.0 --port 8003 --reload
-```
-
-### Rebuild After Changes
-
-```bash
-docker compose build oncall-service
-docker compose up -d oncall-service
-```
-
-### View Logs
-
-```bash
-# All services
-docker compose logs -f
-
-# Specific service
-docker compose logs -f oncall-service
-```
-
-### Clean Restart
-
-```bash
-docker compose down -v
+# Start everything (single command)
 docker compose up -d --build
+
+# Wait ~30 seconds for all services to initialize
 ```
 
----
+## Verify
 
-## 👥 Team
+```bash
+curl http://localhost:8001/health   # Alert Ingestion
+curl http://localhost:8002/health   # Incident Management
+curl http://localhost:8003/health   # On-Call Service
+curl http://localhost:8004/health   # Notification Service
+curl http://localhost:8080/health   # Web UI
+```
 
-| Role | Responsibilities |
-|------|-----------------|
-| **Person 1** — Backend | Alert Ingestion + Incident Management + Database |
-| **Person 2** — DevOps | On-Call Service + Docker + CI/CD + Monitoring + Security |
-| **Person 3** — Frontend | Web UI + Notifications + Demo |
+## Send Test Alert
 
----
+```bash
+curl -X POST http://localhost:8001/api/v1/alerts \
+  -H "Content-Type: application/json" \
+  -d '{
+    "service": "frontend-api",
+    "severity": "high",
+    "message": "HTTP 5xx error rate > 10%",
+    "labels": {"env": "production"}
+  }'
+```
 
-## 📄 License
+## Access
 
-Hackathon Project — 2026
+| Service        | URL                      | Credentials   |
+| -------------- | ------------------------ | ------------- |
+| **Web UI**     | http://localhost:8080     | -             |
+| **Grafana**    | http://localhost:3000     | admin / admin |
+| **Prometheus** | http://localhost:9090     | -             |
+
+## CI/CD Pipeline
+
+```bash
+chmod +x run-pipeline.sh
+./run-pipeline.sh
+```
+
+**5 stages:** Code Quality → Security Scanning → Build Images → Deploy → Post-Deployment Verification
+
+## API Documentation
+
+### Alert Ingestion Service (port 8001)
+
+| Method | Endpoint              | Description                        |
+| ------ | --------------------- | ---------------------------------- |
+| POST   | `/api/v1/alerts`      | Ingest a new alert                 |
+| GET    | `/api/v1/alerts`      | List alerts (paginated, filterable)|
+| GET    | `/api/v1/alerts/{id}` | Get alert by UUID                  |
+| GET    | `/health`             | Liveness probe                     |
+| GET    | `/health/ready`       | Readiness probe (DB connectivity)  |
+| GET    | `/metrics`            | Prometheus-format metrics          |
+
+**POST /api/v1/alerts** request body:
+```json
+{
+  "service": "frontend-api",
+  "severity": "high",
+  "message": "HTTP 5xx error rate > 10%",
+  "labels": {"env": "production"},
+  "timestamp": "2026-02-09T15:30:00Z"
+}
+```
+Severities: `critical`, `high`, `medium`, `low`
+
+### Incident Management Service (port 8002)
+
+| Method | Endpoint                           | Description                              |
+| ------ | ---------------------------------- | ---------------------------------------- |
+| POST   | `/api/v1/incidents`                | Create incident                          |
+| GET    | `/api/v1/incidents`                | List incidents (paginated)               |
+| GET    | `/api/v1/incidents/{id}`           | Get full incident (alerts, notes, timeline) |
+| PATCH  | `/api/v1/incidents/{id}`           | Update status / assign / add note        |
+| GET    | `/api/v1/incidents/{id}/metrics`   | MTTA & MTTR for one incident             |
+| GET    | `/api/v1/incidents/stats/summary`  | Aggregate stats across all incidents     |
+| GET    | `/health`                          | Liveness probe                           |
+| GET    | `/health/ready`                    | Readiness probe (DB connectivity)        |
+| GET    | `/metrics`                         | Prometheus-format metrics                |
+
+**Status State Machine:**
+```
+open ──▶ acknowledged ──▶ in_progress ──▶ resolved
+  │           │                              ▲
+  │           └──────────────────────────────┘
+  └──────────────────────────────────────────┘
+```
+Illegal transitions (e.g. `resolved → open`) return **HTTP 409 Conflict**.
+
+**PATCH /api/v1/incidents/{id}** — Acknowledge/Resolve:
+```json
+{"status": "acknowledged"}
+{"status": "resolved", "notes": "Fixed the root cause"}
+```
+
+### On-Call & Escalation Service (port 8003)
+
+| Method | Endpoint                              | Description          |
+| ------ | ------------------------------------- | -------------------- |
+| POST   | `/api/v1/schedules`                   | Create schedule      |
+| GET    | `/api/v1/schedules`                   | List schedules       |
+| GET    | `/api/v1/oncall/current?team={team}`  | Current on-call      |
+| POST   | `/api/v1/escalate`                    | Trigger escalation   |
+| GET    | `/health`                             | Health check         |
+| GET    | `/metrics`                            | Prometheus metrics   |
+
+### Notification Service (port 8004)
+
+| Method | Endpoint               | Description          |
+| ------ | ---------------------- | -------------------- |
+| POST   | `/api/v1/notify`       | Send notification    |
+| GET    | `/api/v1/notifications`| List notifications   |
+| GET    | `/health`              | Health check         |
+| GET    | `/metrics`             | Prometheus metrics   |
+
+## Database Schema
+
+Key tables in `database/init.sql`:
+
+| Table               | Purpose                                          |
+| ------------------- | ------------------------------------------------ |
+| `alerts`            | Raw alerts with fingerprint-based dedup          |
+| `incidents`         | Incident lifecycle with status state machine     |
+| `incident_notes`    | Timestamped notes attached to incidents          |
+| `incident_timeline` | Immutable audit log of every incident event      |
+
+## Prometheus Metrics
+
+| Metric                                        | Type      | Service             |
+| --------------------------------------------- | --------- | ------------------- |
+| `alerts_received_total{severity}`             | Counter   | Alert Ingestion     |
+| `alerts_correlated_total{result}`             | Counter   | Alert Ingestion     |
+| `alert_processing_seconds`                    | Histogram | Alert Ingestion     |
+| `incidents_created_total{severity}`           | Counter   | Incident Management |
+| `incidents_by_status{status}`                 | Gauge     | Incident Management |
+| `incident_mtta_seconds`                       | Histogram | Incident Management |
+| `incident_mttr_seconds`                       | Histogram | Incident Management |
+| `oncall_notifications_sent_total{channel}`    | Counter   | On-Call Service     |
+| `escalations_total{team}`                     | Counter   | On-Call Service     |
+| `notifications_sent_total{channel,status}`    | Counter   | Notification Service|
+
+## Grafana Dashboards
+
+1. **Live Incident Overview** — Open incidents, MTTA/MTTR gauges, alerts over time, top noisy services
+2. **SRE Performance Metrics** — MTTA/MTTR trends, incident volume, acknowledgment/resolution distributions
+
+## End-to-End Flow
+
+1. Alert received via `POST /api/v1/alerts`
+2. Alert Ingestion correlates (same service + severity + 5min window = existing incident)
+3. If new → creates incident via Incident Management
+4. Incident Management looks up on-call engineer via On-Call Service
+5. Notification sent via Notification Service
+6. Engineer opens Web UI → sees incident → clicks Acknowledge → clicks Resolve
+7. MTTA and MTTR automatically calculated
+8. All metrics exposed to Prometheus → visualized in Grafana
+
+## Running Tests
+
+```bash
+# Alert Ingestion tests (~30 tests)
+cd services/alert-ingestion && pip install -r requirements.txt && pytest -v test_main.py
+
+# Incident Management tests (~30 tests)
+cd services/incident-management && pip install -r requirements.txt && pytest -v test_main.py
+```
+
+## Team
+
+- **Person 1**: Backend Services (Alert Ingestion, Incident Management, Database)
+- **Person 2**: DevOps & Infrastructure (On-Call Service, CI/CD, Monitoring)
+- **Person 3**: Frontend & Integration (Web UI, Notification Service, Documentation)
+
+## Tech Stack
+
+- **Backend**: Python 3.11, FastAPI, SQLAlchemy, Pydantic v2
+- **Database**: PostgreSQL 15 with pgcrypto
+- **Frontend**: HTML5, CSS3, Vanilla JavaScript
+- **Web Server**: Nginx (Alpine)
+- **Monitoring**: Prometheus + Grafana
+- **Orchestration**: Docker Compose
+- **CI/CD**: Shell script pipeline (5 stages)
