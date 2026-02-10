@@ -273,6 +273,19 @@ jobs:
           done
           docker compose ps
 
+      - name: Verify database tables are ready
+        run: |
+          for i in $(seq 1 10); do
+            TABLES=$(docker compose exec -T database psql -U hackathon -d incident_platform -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+            echo "Attempt $i: $TABLES tables found"
+            if [ "$TABLES" -ge 4 ] 2>/dev/null; then
+              echo "✅ Database tables ready!"
+              docker compose exec -T database psql -U hackathon -d incident_platform -c "\dt"
+              break
+            fi
+            sleep 5
+          done
+
       - name: Test API Gateway health
         run: |
           curl -sf http://localhost:8080/health || (echo "❌ API Gateway not healthy" && exit 1)
@@ -293,7 +306,6 @@ jobs:
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
               "title": "CI Test Incident",
-              "description": "Created by GitHub Actions",
               "severity": "low",
               "service": "ci-pipeline"
             }')
