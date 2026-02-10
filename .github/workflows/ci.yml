@@ -280,7 +280,7 @@ jobs:
 
       - name: Test Login
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8080/auth/login \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/auth/login \
             -H "Content-Type: application/json" \
             -d '{"username":"admin","password":"admin"}')
           echo "Login response: $RESPONSE"
@@ -288,7 +288,7 @@ jobs:
 
       - name: Test Incident Creation
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8080/incidents/ \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/incidents/ \
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
@@ -302,14 +302,14 @@ jobs:
 
       - name: Test Get Incidents
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/incidents/ \
+          RESPONSE=$(curl -sf http://localhost:8080/api/v1/incidents/ \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Get incidents: $RESPONSE"
           echo "✅ Get incidents works"
 
       - name: Test Alert Ingestion
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8080/alerts/ \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/alerts/ \
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
@@ -323,14 +323,14 @@ jobs:
 
       - name: Test On-Call Schedules
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/oncall/schedules \
+          RESPONSE=$(curl -sf http://localhost:8080/api/v1/oncall/schedules \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Schedules: $RESPONSE"
           echo "✅ On-Call service works"
 
       - name: Test Notifications
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/notifications/ \
+          RESPONSE=$(curl -sf http://localhost:8080/api/v1/notifications/ \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Notifications: $RESPONSE"
           echo "✅ Notification service works"
