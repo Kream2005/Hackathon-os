@@ -126,10 +126,13 @@ EOF
 # ============================================
 cat > .env << 'EOF'
 # Database
-POSTGRES_USER=hackathon
-POSTGRES_PASSWORD=hackathon2026
-POSTGRES_DB=incident_platform
-DATABASE_URL=postgresql://hackathon:hackathon2026@database:5432/incident_platform
+POSTGRES_USER=<CHANGE_ME>
+POSTGRES_PASSWORD=<CHANGE_ME>
+
+# Per-service database URLs
+ALERT_DB_URL=postgresql://<CHANGE_ME>:<CHANGE_ME>@alert-db:5432/alert_db
+INCIDENT_DB_URL=postgresql://<CHANGE_ME>:<CHANGE_ME>@incident-db:5432/incident_db
+NOTIFICATION_DB_URL=postgresql://<CHANGE_ME>:<CHANGE_ME>@notification-db:5432/notification_db
 
 # Service Ports
 ALERT_INGESTION_PORT=8001
@@ -138,9 +141,14 @@ ONCALL_SERVICE_PORT=8003
 NOTIFICATION_SERVICE_PORT=8004
 WEB_UI_PORT=8080
 
+# API Authentication
+API_KEYS=<CHANGE_ME>
+LOGIN_API_KEY=<CHANGE_ME>
+AUTH_USERS=admin:<CHANGE_ME>
+
 # Grafana
 GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=admin
+GRAFANA_ADMIN_PASSWORD=<CHANGE_ME>
 EOF
 
 # ============================================
