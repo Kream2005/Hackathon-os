@@ -35,7 +35,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 # ── Configuration ──────────────────────────────────────────────────────────
-DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://hackathon:hackathon2026@notification-db:5432/notification_db")
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_LOG_SIZE = int(os.getenv("MAX_LOG_SIZE", "10000"))

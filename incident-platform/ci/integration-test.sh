@@ -23,6 +23,13 @@ BASE_URL_ONCALL="http://localhost:8003"
 BASE_URL_NOTIF="http://localhost:8004"
 BASE_URL_GATEWAY="http://localhost:8080"
 
+# ── Load .env ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a; source "$PROJECT_DIR/.env"; set +a
+fi
+
 # -----------------------------------------------
 run_test() {
     local name="$1"
@@ -148,11 +155,11 @@ run_test "Grafana health check" \
     "ok"
 
 run_test "Grafana datasource configured" \
-    "curl -s -u admin:admin http://localhost:3000/api/datasources | python3 -c \"import sys,json; ds=json.load(sys.stdin); print(len(ds))\"" \
+    "curl -s -u ${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD} http://localhost:3000/api/datasources | python3 -c \"import sys,json; ds=json.load(sys.stdin); print(len(ds))\"" \
     "1"
 
 run_test "Grafana dashboards provisioned (>=2)" \
-    "curl -s -u admin:admin 'http://localhost:3000/api/search?type=dash-db' | python3 -c \"import sys,json; d=json.load(sys.stdin); print('OK' if len(d)>=2 else 'FAIL')\"" \
+    "curl -s -u ${GRAFANA_ADMIN_USER}:${GRAFANA_ADMIN_PASSWORD} 'http://localhost:3000/api/search?type=dash-db' | python3 -c \"import sys,json; d=json.load(sys.stdin); print('OK' if len(d)>=2 else 'FAIL')\"" \
     "OK"
 
 echo ""

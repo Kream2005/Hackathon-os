@@ -17,7 +17,7 @@ class Settings:
 
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://hackathon:hackathon2026@database:5432/incident_platform",
+        "",
     )
     INCIDENT_MANAGEMENT_URL: str = os.getenv(
         "INCIDENT_MANAGEMENT_URL", "http://incident-management:8002"

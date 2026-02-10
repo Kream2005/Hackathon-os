@@ -33,10 +33,7 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.exc import SQLAlchemyError
 
 # ── Configuration ──────────────────────────────────────────────────────────
-DATABASE_URL = os.getenv(
-    "DATABASE_URL",
-    "postgresql://hackathon:hackathon2026@incident-db:5432/incident_db",
-)
+DATABASE_URL = os.getenv("DATABASE_URL", "")
 ONCALL_SERVICE_URL = os.getenv("ONCALL_SERVICE_URL", "http://oncall-service:8003")
 NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
 ALERT_INGESTION_URL = os.getenv("ALERT_INGESTION_URL", "http://alert-ingestion:8001")

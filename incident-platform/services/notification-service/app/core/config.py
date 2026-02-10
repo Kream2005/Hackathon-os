@@ -8,7 +8,7 @@ class Settings:
     SERVICE_NAME: str = "notification-service"
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://hackathon:hackathon2026@database:5432/incident_platform",
+        "",
     )
     WEBHOOK_URL: str = os.getenv("WEBHOOK_URL", "")
     LOG_LEVEL: str = os.getenv("LOG_LEVEL", "INFO").upper()

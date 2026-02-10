@@ -28,6 +28,11 @@ cd "$PROJECT_DIR"
 CHECKS=0
 PASSED=0
 FAILED=0
+
+# ── Load .env ──
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a; source "$PROJECT_DIR/.env"; set +a
+fi
 WARNINGS=0
 
 # ── Logging helpers ──
@@ -153,7 +158,7 @@ for pair in "${DB_PAIRS[@]}"; do
     CHECKS=$((CHECKS + 1))
     echo -n "  [$CHECKS] $DB_HOST ($DB_NAME) ... "
 
-    if docker compose exec -T "$DB_HOST" pg_isready -U hackathon -d "$DB_NAME" &>/dev/null 2>&1; then
+    if docker compose exec -T "$DB_HOST" pg_isready -U "${POSTGRES_USER}" -d "$DB_NAME" &>/dev/null 2>&1; then
         echo -e "${GREEN}PASS${NC}"
         PASSED=$((PASSED + 1))
     else
@@ -167,7 +172,7 @@ done
 # ============================================
 log_section "4/5 — E2E Smoke Tests (via API Gateway)"
 
-API_KEY="${API_KEYS:-hackathon-api-key-2026}"
+API_KEY="${API_KEYS%%,*}"
 GATEWAY="http://localhost:8080"
 
 # 4a. Login to get session token
@@ -175,7 +180,7 @@ log_info "Authenticating via API Gateway..."
 LOGIN_RESP=$(curl -sf -X POST "$GATEWAY/api/v1/auth/login" \
     -H "Content-Type: application/json" \
     -H "X-API-Key: $API_KEY" \
-    -d '{"username":"admin","password":"admin"}' \
+    -d "{\"username\":\"${AUTH_USERS%%:*}\",\"password\":\"$(echo "${AUTH_USERS%%,*}" | cut -d: -f2)\"}" \
     --max-time 5 2>/dev/null || echo "")
 
 TOKEN=$(echo "$LOGIN_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null || echo "")
@@ -202,17 +207,17 @@ check_response "Query current on-call" \
 
 # 4d. Send alert via gateway
 check_response "Send alert via API Gateway" \
-    "curl -sf -X POST '$GATEWAY/api/v1/alerts' \
+    "curl -sf -X POST \"$GATEWAY/api/v1/alerts\" \
         -H 'Content-Type: application/json' \
-        -H 'X-API-Key: $API_KEY' \
+        -H \"X-API-Key: $API_KEY\" \
         -d '{\"service\":\"verify-svc\",\"severity\":\"high\",\"message\":\"Verify smoke test alert\",\"timestamp\":\"2026-02-10T00:00:00Z\"}' \
         --max-time 5" \
     "received\|created\|alert_id"
 
 # 4e. List incidents
 check_response "List incidents via gateway" \
-    "curl -sf '$GATEWAY/api/v1/incidents' \
-        -H 'X-API-Key: $API_KEY' \
+    "curl -sf \"$GATEWAY/api/v1/incidents\" \
+        -H \"X-API-Key: $API_KEY\" \
         --max-time 5" \
     "incidents\|incident_id\|\[\]"
 

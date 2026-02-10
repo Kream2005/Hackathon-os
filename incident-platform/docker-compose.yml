@@ -186,7 +186,7 @@ services:
       ONCALL_SERVICE_URL: http://oncall-service:8003
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
       API_KEYS: ${API_KEYS:-}
-      AUTH_USERS: ${AUTH_USERS:-admin:admin,operator:operator}
+      AUTH_USERS: ${AUTH_USERS}
       LOGIN_API_KEY: ${LOGIN_API_KEY:-}
       RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-120}
       RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-2}

@@ -36,7 +36,7 @@ AUTH_ENABLED = len(API_KEYS) > 0
 
 # User credentials for the login page (username:password pairs)
 # Format: "admin:admin123,operator:op456"
-_raw_users = os.getenv("AUTH_USERS", "admin:admin,operator:operator")
+_raw_users = os.getenv("AUTH_USERS", "")
 USER_CREDENTIALS: dict[str, str] = {}
 for pair in _raw_users.split(","):
     pair = pair.strip()
@@ -45,7 +45,7 @@ for pair in _raw_users.split(","):
         USER_CREDENTIALS[u.strip()] = p.strip()
 
 # The API key returned on successful login
-LOGIN_API_KEY = os.getenv("LOGIN_API_KEY", list(API_KEYS)[0] if API_KEYS else "default-key")
+LOGIN_API_KEY = os.getenv("LOGIN_API_KEY", list(API_KEYS)[0] if API_KEYS else "")
 
 # Paths that bypass authentication (monitoring / health probes / login)
 AUTH_BYPASS_PATHS: set[str] = {"/health", "/metrics", "/api/services/health", "/api/v1/auth/login"}

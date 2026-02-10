@@ -14,6 +14,13 @@ COVERAGE_THRESHOLD=60
 ERRORS=0
 TESTED=0
 
+# ── Load .env ──
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_DIR="$(dirname "$SCRIPT_DIR")"
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a; source "$PROJECT_DIR/.env"; set +a
+fi
+
 echo -e "${YELLOW}🧪 Installing test dependencies...${NC}"
 pip install pytest pytest-cov httpx fastapi uvicorn prometheus-client pydantic --quiet 2>/dev/null || \
 pip3 install pytest pytest-cov httpx fastapi uvicorn prometheus-client pydantic --quiet 2>/dev/null || true

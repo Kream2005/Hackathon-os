@@ -16,7 +16,7 @@ class Settings:
     API_KEYS: set = {k.strip() for k in _raw_keys.split(",") if k.strip()}
     AUTH_ENABLED: bool = len(API_KEYS) > 0
 
-    _raw_users: str = os.getenv("AUTH_USERS", "admin:admin,operator:operator")
+    _raw_users: str = os.getenv("AUTH_USERS", "")
     USER_CREDENTIALS: dict = {}
     for pair in _raw_users.split(","):
         pair = pair.strip()
@@ -24,7 +24,7 @@ class Settings:
             u, p = pair.split(":", 1)
             USER_CREDENTIALS[u.strip()] = p.strip()
 
-    LOGIN_API_KEY: str = os.getenv("LOGIN_API_KEY", list(API_KEYS)[0] if API_KEYS else "default-key")
+    LOGIN_API_KEY: str = os.getenv("LOGIN_API_KEY", list(API_KEYS)[0] if API_KEYS else "")
 
     AUTH_BYPASS_PATHS: set = {"/health", "/metrics", "/api/services/health", "/api/v1/auth/login"}
 

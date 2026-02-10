@@ -76,18 +76,23 @@ if [ ! -f ".env" ]; then
     echo -e "${YELLOW}  ⚠️  No .env file found — creating default...${NC}"
     cat > .env << 'EOF'
 POSTGRES_USER=hackathon
-POSTGRES_PASSWORD=hackathon2026
-POSTGRES_DB=incident_platform
-API_KEYS=hackathon-api-key-2026
-LOGIN_API_KEY=hackathon-api-key-2026
-AUTH_USERS=admin:admin,operator:operator
+POSTGRES_PASSWORD=changeme
+ALERT_DB_URL=postgresql://hackathon:changeme@alert-db:5432/alert_db
+INCIDENT_DB_URL=postgresql://hackathon:changeme@incident-db:5432/incident_db
+NOTIFICATION_DB_URL=postgresql://hackathon:changeme@notification-db:5432/notification_db
+API_KEYS=changeme-api-key
+LOGIN_API_KEY=changeme-api-key
+AUTH_USERS=admin:changeme
 GRAFANA_ADMIN_USER=admin
-GRAFANA_ADMIN_PASSWORD=admin
+GRAFANA_ADMIN_PASSWORD=changeme
 EOF
-    echo -e "${GREEN}  ✅ .env created${NC}"
+    echo -e "${GREEN}  ✅ .env created — EDIT IT with real values before deploying${NC}"
 else
     echo -e "${GREEN}  ✅ .env exists${NC}"
 fi
+
+# Source .env so variables are available in this script
+set -a; source .env; set +a
 
 # Check Docker
 if ! docker info &>/dev/null; then
@@ -156,7 +161,7 @@ echo -e "${BOLD}${CYAN}── STEP 5: Wait for databases ──${NC}"
 for db in alert-db incident-db notification-db; do
     echo -n "  ⏳ $db... "
     for i in $(seq 1 30); do
-        if docker compose exec -T "$db" pg_isready -U hackathon &>/dev/null; then
+        if docker compose exec -T "$db" pg_isready -U "${POSTGRES_USER}" &>/dev/null; then
             echo -e "${GREEN}ready${NC}"
             break
         fi
@@ -287,17 +292,17 @@ if [ "$SKIP_TESTS" = false ]; then
 
     # Login
     smoke_test "Login (admin)" \
-        "curl -s -X POST http://localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"admin\",\"password\":\"admin\"}'" \
+        "curl -s -X POST http://localhost:8080/api/v1/auth/login -H 'Content-Type: application/json' -d '{\"username\":\"${AUTH_USERS%%:*}\",\"password\":\"'$(echo "${AUTH_USERS%%,*}" | cut -d: -f2)'\"}'" \
         "api_key"
 
     # Create alert → incident
     smoke_test "Alert → Incident" \
-        "curl -s -X POST http://localhost:8080/api/v1/alerts -H 'Content-Type: application/json' -H 'X-API-Key: hackathon-api-key-2026' -d '{\"source\":\"deploy-test\",\"severity\":\"low\",\"message\":\"Deploy smoke test\",\"service\":\"cd-script\"}'" \
+        "curl -s -X POST http://localhost:8080/api/v1/alerts -H 'Content-Type: application/json' -H 'X-API-Key: ${API_KEYS%%,*}' -d '{\"source\":\"deploy-test\",\"severity\":\"low\",\"message\":\"Deploy smoke test\",\"service\":\"cd-script\"}'" \
         "incident_id"
 
     # List incidents
     smoke_test "List Incidents" \
-        "curl -s http://localhost:8080/api/v1/incidents -H 'X-API-Key: hackathon-api-key-2026'" \
+        "curl -s http://localhost:8080/api/v1/incidents -H 'X-API-Key: ${API_KEYS%%,*}'" \
         "incidents"
 
     # Create schedule
@@ -307,7 +312,7 @@ if [ "$SKIP_TESTS" = false ]; then
 
     # Send notification
     smoke_test "Send Notification" \
-        "curl -s -X POST http://localhost:8080/api/v1/notify -H 'Content-Type: application/json' -H 'X-API-Key: hackathon-api-key-2026' -d '{\"incident_id\":\"00000000-0000-0000-0000-000000000000\",\"channel\":\"mock\",\"message\":\"CD test\",\"recipient\":\"cd@test.com\"}'" \
+        "curl -s -X POST http://localhost:8080/api/v1/notify -H 'Content-Type: application/json' -H 'X-API-Key: ${API_KEYS%%,*}' -d '{\"incident_id\":\"00000000-0000-0000-0000-000000000000\",\"channel\":\"mock\",\"message\":\"CD test\",\"recipient\":\"cd@test.com\"}'" \
         "sent"
 
     # Prometheus
@@ -349,7 +354,7 @@ echo ""
 echo -e "${BOLD}  🔗 Access URLs:${NC}"
 echo -e "     Web UI:      ${CYAN}http://localhost:3001${NC}"
 echo -e "     API Gateway: ${CYAN}http://localhost:8080${NC}"
-echo -e "     Grafana:     ${CYAN}http://localhost:3000${NC}  (admin/admin)"
+echo -e "     Grafana:     ${CYAN}http://localhost:3000${NC}  (${GRAFANA_ADMIN_USER}/${GRAFANA_ADMIN_PASSWORD})"
 echo -e "     Prometheus:  ${CYAN}http://localhost:9090${NC}"
 echo ""
 echo -e "${PURPLE}══════════════════════════════════════════════${NC}"

@@ -5,6 +5,7 @@ Run: pytest test_main.py -v
 
 import pytest
 import json
+import os
 from httpx import AsyncClient, ASGITransport
 
 from main import app, _resolve_service, SlidingWindowRateLimiter, SERVICE_MAP
@@ -13,7 +14,12 @@ from main import app, _resolve_service, SlidingWindowRateLimiter, SERVICE_MAP
 @pytest.fixture
 async def client():
     transport = ASGITransport(app=app)
-    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+    api_key = os.getenv("API_KEYS", "test-key").split(",")[0].strip()
+    async with AsyncClient(
+        transport=transport,
+        base_url="http://test",
+        headers={"X-API-Key": api_key},
+    ) as ac:
         yield ac
 
 

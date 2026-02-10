@@ -28,6 +28,11 @@ cd "$PROJECT_DIR"
 
 IMAGE_PREFIX="incident-platform"
 MAX_RETRIES=12
+
+# ── Load .env ──
+if [ -f "$PROJECT_DIR/.env" ]; then
+    set -a; source "$PROJECT_DIR/.env"; set +a
+fi
 RETRY_INTERVAL=5
 DEPLOY_TIMEOUT=$((MAX_RETRIES * RETRY_INTERVAL))
 
@@ -193,7 +198,7 @@ log_info "Waiting for databases..."
 DB_SERVICES=("alert-db" "incident-db" "notification-db")
 for db in "${DB_SERVICES[@]}"; do
     for i in $(seq 1 $MAX_RETRIES); do
-        if docker compose exec -T "$db" pg_isready -U hackathon &>/dev/null 2>&1; then
+        if docker compose exec -T "$db" pg_isready -U "${POSTGRES_USER}" &>/dev/null 2>&1; then
             log_ok "$db is ready"
             break
         fi
@@ -295,7 +300,7 @@ echo ""
 echo -e "  ${BOLD}Endpoints:${NC}"
 echo -e "    Web UI:      http://localhost:3001"
 echo -e "    API Gateway: http://localhost:8080"
-echo -e "    Grafana:     http://localhost:3000  (admin/admin)"
+echo -e "    Grafana:     http://localhost:3000  (\${GRAFANA_ADMIN_USER}/\${GRAFANA_ADMIN_PASSWORD})"
 echo -e "    Prometheus:  http://localhost:9090"
 echo ""
 

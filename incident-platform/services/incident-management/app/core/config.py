@@ -8,7 +8,7 @@ class Settings:
     SERVICE_NAME: str = "incident-management"
     DATABASE_URL: str = os.getenv(
         "DATABASE_URL",
-        "postgresql://hackathon:hackathon2026@database:5432/incident_platform",
+        "",
     )
     ONCALL_SERVICE_URL: str = os.getenv("ONCALL_SERVICE_URL", "http://oncall-service:8003")
     NOTIFICATION_SERVICE_URL: str = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
