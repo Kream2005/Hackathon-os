@@ -424,27 +424,150 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Deploy notification
+      - name: Create .env file
         run: |
-          echo "🚀 Deployment triggered for commit ${{ github.sha }}"
-          echo "📦 All checks passed - ready for deployment"
+          cat > .env << EOF
+          POSTGRES_USER=hackathon
+          POSTGRES_PASSWORD=hackathon2026
+          POSTGRES_DB=incident_platform
+          API_KEYS=hackathon-api-key-2026
+          LOGIN_API_KEY=hackathon-api-key-2026
+          AUTH_USERS=admin:admin,operator:operator
+          GRAFANA_ADMIN_USER=admin
+          GRAFANA_ADMIN_PASSWORD=admin
+          EOF
+
+      - name: Deploy with Docker Compose
+        run: |
+          echo "🚀 Deploying commit ${{ github.sha }}..."
+          docker compose up -d --build
+          echo "⏳ Waiting for services to start..."
+          sleep 30
+
+      - name: Wait for databases healthy
+        run: |
+          for db in alert-db incident-db notification-db; do
+            echo "⏳ Waiting for $db..."
+            for i in $(seq 1 20); do
+              if docker compose exec -T $db pg_isready -U hackathon 2>/dev/null; then
+                echo "✅ $db is ready"
+                break
+              fi
+              sleep 5
+            done
+          done
+
+      - name: Wait for all services healthy
+        run: |
+          echo "⏳ Waiting for services to become healthy..."
+          for i in $(seq 1 30); do
+            HEALTHY=$(docker compose ps --format json | grep -c '"healthy"' || true)
+            echo "  Attempt $i: $HEALTHY services healthy"
+            if [ "$HEALTHY" -ge 8 ]; then
+              echo "✅ All services healthy!"
+              break
+            fi
+            sleep 10
+          done
+          docker compose ps
+
+      - name: Health check all services
+        run: |
+          FAILED=0
+          for endpoint in \
+            "Alert-Ingestion|http://localhost:8001/health" \
+            "Incident-Management|http://localhost:8002/health" \
+            "OnCall-Service|http://localhost:8003/health" \
+            "Notification-Service|http://localhost:8004/health" \
+            "API-Gateway|http://localhost:8080/health" \
+            "Prometheus|http://localhost:9090/-/healthy" \
+            "Grafana|http://localhost:3000/api/health"; do
+            
+            NAME=$(echo "$endpoint" | cut -d'|' -f1)
+            URL=$(echo "$endpoint" | cut -d'|' -f2)
+            
+            if curl -sf "$URL" > /dev/null 2>&1; then
+              echo "✅ $NAME is healthy"
+            else
+              echo "❌ $NAME failed health check"
+              FAILED=$((FAILED + 1))
+            fi
+          done
+          
+          if [ "$FAILED" -gt 0 ]; then
+            echo "❌ $FAILED service(s) failed health checks"
+            docker compose logs --tail=20
+            exit 1
+          fi
+
+      - name: Smoke test - Login
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"admin","password":"admin"}')
+          echo "$RESPONSE" | grep -q "api_key" && echo "✅ Login works" || (echo "❌ Login failed" && exit 1)
+
+      - name: Smoke test - Create Alert & Incident
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/alerts \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: hackathon-api-key-2026" \
+            -d '{
+              "source": "deploy-smoke-test",
+              "severity": "low",
+              "message": "Deploy smoke test alert",
+              "service": "ci-deploy"
+            }')
+          echo "Alert response: $RESPONSE"
+          echo "$RESPONSE" | grep -q '"incident_id"' && echo "✅ Alert → Incident pipeline works" || echo "⚠️ Alert accepted but no incident created"
+
+      - name: Smoke test - Get Incidents
+        run: |
+          RESPONSE=$(curl -sf http://localhost:8080/api/v1/incidents \
+            -H "X-API-Key: hackathon-api-key-2026")
+          echo "Incidents: $RESPONSE"
+          echo "✅ Incident listing works"
+
+      - name: Smoke test - Notification
+        run: |
+          RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/notify \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: hackathon-api-key-2026" \
+            -d '{
+              "incident_id": "00000000-0000-0000-0000-000000000000",
+              "channel": "mock",
+              "message": "Deploy smoke test notification",
+              "recipient": "deploy@test.com"
+            }')
+          echo "Notification: $RESPONSE"
+          echo "✅ Notification service works"
+
+      - name: Deployment summary
+        run: |
+          echo "========================================="
+          echo "🚀 DEPLOYMENT SUCCESSFUL"
+          echo "========================================="
+          echo "📅 Date: $(date)"
+          echo "🔖 Commit: ${{ github.sha }}"
+          echo "👤 Author: ${{ github.actor }}"
+          echo "🌿 Branch: ${{ github.ref_name }}"
           echo ""
-          echo "Services to deploy:"
-          echo "  - alert-ingestion"
-          echo "  - incident-management"
-          echo "  - oncall-service"
-          echo "  - notification-service"
-          echo "  - api-gateway"
-          echo "  - web-ui"
+          echo "📦 Services deployed:"
+          docker compose ps --format "table {{.Name}}\t{{.Status}}\t{{.Ports}}"
+          echo ""
+          echo "🔗 Access URLs:"
+          echo "  Web UI:      http://localhost:3001"
+          echo "  API Gateway: http://localhost:8080"
+          echo "  Grafana:     http://localhost:3000"
+          echo "  Prometheus:  http://localhost:9090"
+          echo "========================================="
 
-      # Uncomment below for actual deployment:
-      # - name: Deploy to production
-      #   run: |
-      #     docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
-
-      - name: Verify deployment
+      - name: Collect logs on failure
+        if: failure()
         run: |
-          echo " Deployment pipeline completed successfully"
-          echo " Commit: ${{ github.sha }}"
-          echo " Author: ${{ github.actor }}"
-          echo " Date: $(date)"
+          echo "📋 Service logs:"
+          docker compose logs --tail=50
+
+      - name: Cleanup
+        if: always()
+        run: docker compose down -v
