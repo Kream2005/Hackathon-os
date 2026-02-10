@@ -37,6 +37,9 @@ DATABASE_URL = os.getenv(
 INCIDENT_MANAGEMENT_URL = os.getenv(
     "INCIDENT_MANAGEMENT_URL", "http://incident-management:8002"
 )
+NOTIFICATION_SERVICE_URL = os.getenv(
+    "NOTIFICATION_SERVICE_URL", "http://notification-service:8004"
+)
 CORRELATION_WINDOW_MINUTES = int(os.getenv("CORRELATION_WINDOW_MINUTES", "5"))
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
@@ -309,6 +312,24 @@ def _increment_alert_count(conn, incident_id: str):
     )
 
 
+def _notify_alert(incident_id: str, severity: str, service: str, message: str):
+    """Send a notification when an alert is correlated to an existing incident."""
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            client.post(
+                f"{NOTIFICATION_SERVICE_URL}/api/v1/notify",
+                json={
+                    "incident_id": incident_id,
+                    "channel": "mock",
+                    "recipient": "ops-team",
+                    "message": f"[ALERT CORRELATED] [{severity.upper()}] {service}: {message[:120]}",
+                    "severity": severity,
+                },
+            )
+    except Exception as exc:
+        logger.warning("Notification service unreachable: %s", exc)
+
+
 # ── Endpoints ─────────────────────────────────────────────────────────────
 @app.post(
     "/api/v1/alerts",
@@ -393,6 +414,10 @@ def create_alert(alert: AlertIn, request: Request):
             raise HTTPException(status_code=500, detail="Database error while processing alert")
 
         alerts_correlated_total.labels(result=action).inc()
+
+        # Send notification for correlated alerts (new incidents already notify via incident-management)
+        if action == "existing_incident" and incident_id:
+            _notify_alert(incident_id, severity, service, alert.message)
 
         logger.info(
             "Alert processed alert_id=%s incident_id=%s action=%s fingerprint=%s",

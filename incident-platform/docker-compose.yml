@@ -27,6 +27,7 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INCIDENT_MANAGEMENT_URL: http://incident-management:8002
+      NOTIFICATION_SERVICE_URL: http://notification-service:8004
     depends_on:
       database:
         condition: service_healthy
@@ -88,6 +89,12 @@ services:
     build: ./services/notification-service
     ports:
       - "8004:8004"
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      NOTIFICATION_SERVICE_URL: http://notification-service:8004
+    depends_on:
+      database:
+        condition: service_healthy
     networks:
       - incident-platform
     restart: unless-stopped

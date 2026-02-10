@@ -210,19 +210,28 @@ def _get_oncall(team: str) -> Optional[Dict]:
 
 
 def _notify(incident_id: str, severity: str, assigned_to: str, title: str):
-    try:
-        with httpx.Client(timeout=3.0) as client:
-            client.post(
-                f"{NOTIFICATION_SERVICE_URL}/api/v1/notify",
-                json={
-                    "incident_id": incident_id,
-                    "channel": "mock",
-                    "recipient": assigned_to,
-                    "message": f"[{severity.upper()}] {title}",
-                },
-            )
-    except Exception as exc:
-        logger.warning("Notification service unreachable: %s", exc)
+    """Send notification to the assigned person and also to the ops-team channel."""
+    recipients = []
+    if assigned_to:
+        recipients.append({"recipient": assigned_to, "channel": "mock"})
+    # Always notify the ops-team channel so notifications always appear
+    recipients.append({"recipient": "ops-team", "channel": "slack"})
+
+    for target in recipients:
+        try:
+            with httpx.Client(timeout=3.0) as client:
+                client.post(
+                    f"{NOTIFICATION_SERVICE_URL}/api/v1/notify",
+                    json={
+                        "incident_id": incident_id,
+                        "channel": target["channel"],
+                        "recipient": target["recipient"],
+                        "message": title if title.startswith("[") else f"[{severity.upper()}] {title}",
+                        "severity": severity,
+                    },
+                )
+        except Exception as exc:
+            logger.warning("Notification service unreachable: %s", exc)
 
 
 def _add_timeline_event(conn, incident_id: str, event_type: str, actor: str = "system", detail: Dict = None):
@@ -355,9 +364,8 @@ def create_incident(body: IncidentCreate):
     incidents_total.labels(status="open").inc()
     incidents_created_total.labels(severity=body.severity).inc()
 
-    # Notify (fire-and-forget)
-    if assigned_to:
-        _notify(incident_id, body.severity, assigned_to, body.title)
+    # Always notify — even without an assigned person, ops-team gets notified
+    _notify(incident_id, body.severity, assigned_to or "", body.title)
 
     logger.info("Incident created id=%s service=%s severity=%s assigned=%s", incident_id, body.service, body.severity, assigned_to)
 

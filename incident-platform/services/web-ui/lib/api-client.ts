@@ -77,6 +77,19 @@ export const alertsFetcher = async (path: string): Promise<any> => {
   return data
 }
 
+/**
+ * Fetcher that unwraps paginated notification responses.
+ * The /api/v1/notifications endpoint returns { notifications: [...], total, page, per_page }
+ * but SWR consumers expect a flat NotificationLog[] array.
+ */
+export const notificationsFetcher = async (path: string): Promise<any> => {
+  const data = await apiFetch<any>(path)
+  if (data && typeof data === "object" && Array.isArray(data.notifications)) {
+    return data.notifications
+  }
+  return data
+}
+
 // ── Incident helpers ──────────────────────────────────────────────────────
 
 export async function createIncident(body: {

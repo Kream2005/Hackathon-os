@@ -1,7 +1,7 @@
 "use client"
 
 import useSWR from "swr"
-import { fetcher } from "@/lib/api-client"
+import { notificationsFetcher } from "@/lib/api-client"
 import type { NotificationLog } from "@/lib/types"
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card"
 import { Badge } from "@/components/ui/badge"
@@ -19,7 +19,7 @@ function formatDate(dateStr: string) {
 export default function NotificationsPage() {
   const { data: notifications, error, isLoading } = useSWR<NotificationLog[]>(
     "/api/v1/notifications",
-    fetcher,
+    notificationsFetcher,
     { refreshInterval: 10000 },
   )
 
