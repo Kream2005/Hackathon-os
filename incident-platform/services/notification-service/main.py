@@ -5,7 +5,7 @@ Simulates notifications via console logging.
 """
 
 import time
-from datetime import datetime
+from datetime import datetime, timezone
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -43,7 +43,7 @@ def health():
         "status": "ok",
         "service": "notification-service",
         "version": "1.0.0",
-        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.now(timezone.utc).isoformat() + "Z",
     }
 
 
@@ -77,7 +77,7 @@ def send_notification(data: dict):
         "recipient": recipient,
         "message": message,
         "incident_id": incident_id,
-        "sent_at": datetime.utcnow().isoformat() + "Z",
+        "sent_at": datetime.now(timezone.utc).isoformat() + "Z",
         "status": "delivered",
     }
     notification_log.append(record)

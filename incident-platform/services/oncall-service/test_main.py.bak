@@ -1,26 +1,11 @@
 """
-Tests for On-Call Service v2.0.0
-Coverage target: ≥ 95%
-Total: 58 tests across 9 test classes
+Tests for On-Call Service
+Coverage target: ≥ 75% (above the 60% minimum)
 """
-
-import time
-from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
 
 import pytest
 from fastapi.testclient import TestClient
-from main import (
-    app,
-    schedules_db,
-    overrides_db,
-    escalation_log,
-    oncall_history,
-    last_known_oncall,
-    DEFAULT_OVERRIDE_HOURS,
-    SERVICE_NAME,
-    SERVICE_VERSION,
-)
+from main import app, schedules_db, overrides_db, escalation_log
 
 client = TestClient(app)
 
@@ -34,8 +19,6 @@ def reset_state():
     schedules_db.clear()
     overrides_db.clear()
     escalation_log.clear()
-    oncall_history.clear()
-    last_known_oncall.clear()
     # Re-seed default schedules (simulates startup)
     schedules_db["platform-engineering"] = {
         "id": "test-pe-id",
@@ -47,7 +30,6 @@ def reset_state():
             {"name": "Carol Chen", "email": "carol@company.com", "role": "secondary"},
         ],
         "created_at": "2026-01-01T00:00:00Z",
-        "updated_at": None,
     }
     yield
 
@@ -64,8 +46,8 @@ class TestHealth:
         response = client.get("/health")
         data = response.json()
         assert data["status"] == "ok"
-        assert data["service"] == SERVICE_NAME
-        assert data["version"] == SERVICE_VERSION
+        assert data["service"] == "oncall-service"
+        assert data["version"] == "1.0.0"
 
     def test_health_includes_schedules_count(self):
         response = client.get("/health")
@@ -77,12 +59,6 @@ class TestHealth:
         response = client.get("/health")
         data = response.json()
         assert "timestamp" in data
-
-    def test_health_includes_active_overrides(self):
-        response = client.get("/health")
-        data = response.json()
-        assert "active_overrides" in data
-        assert data["active_overrides"] == 0
 
 
 class TestMetrics:
@@ -96,12 +72,14 @@ class TestMetrics:
         assert "oncall_requests_total" in text or "oncall_" in text
 
     def test_metrics_contains_escalation_counter(self):
+        # Trigger an escalation first to ensure the metric exists
         client.post("/api/v1/escalate", json={
             "team": "platform-engineering",
             "incident_id": "test-123",
         })
         response = client.get("/metrics")
-        assert "oncall_escalations_total" in response.text
+        text = response.text
+        assert "oncall_escalations_total" in text
 
     def test_metrics_contains_notifications_counter(self):
         client.post("/api/v1/escalate", json={
@@ -109,11 +87,8 @@ class TestMetrics:
             "incident_id": "test-456",
         })
         response = client.get("/metrics")
-        assert "oncall_notifications_sent_total" in response.text
-
-    def test_metrics_contains_rotation_changes(self):
-        response = client.get("/metrics")
-        assert "oncall_rotation_changes_total" in response.text
+        text = response.text
+        assert "oncall_notifications_sent_total" in text
 
 
 # ============================================
@@ -196,17 +171,6 @@ class TestSchedules:
         assert response.status_code == 201
         assert response.json()["rotation_type"] == "daily"
 
-    def test_create_schedule_records_history(self):
-        client.post("/api/v1/schedules", json={
-            "team": "history-test",
-            "rotation_type": "weekly",
-            "members": [
-                {"name": "Alice", "email": "alice@test.com", "role": "primary"},
-            ],
-        })
-        events = [e for e in oncall_history if e["team"] == "history-test" and e["event_type"] == "schedule_created"]
-        assert len(events) >= 1
-
     def test_list_schedules(self):
         response = client.get("/api/v1/schedules")
         assert response.status_code == 200
@@ -228,6 +192,7 @@ class TestSchedules:
         response = client.delete("/api/v1/schedules/platform-engineering")
         assert response.status_code == 200
         assert response.json()["status"] == "deleted"
+
         # Verify it's gone
         response = client.get("/api/v1/schedules/platform-engineering")
         assert response.status_code == 404
@@ -235,74 +200,6 @@ class TestSchedules:
     def test_delete_schedule_not_found(self):
         response = client.delete("/api/v1/schedules/nonexistent")
         assert response.status_code == 404
-
-    def test_delete_schedule_records_history(self):
-        client.delete("/api/v1/schedules/platform-engineering")
-        events = [e for e in oncall_history if e["event_type"] == "schedule_deleted"]
-        assert len(events) >= 1
-
-
-# ============================================
-# PATCH Schedule (NEW)
-# ============================================
-class TestScheduleUpdate:
-    def test_patch_rotation_type(self):
-        response = client.patch("/api/v1/schedules/platform-engineering", json={
-            "rotation_type": "daily",
-        })
-        assert response.status_code == 200
-        assert response.json()["rotation_type"] == "daily"
-        assert response.json()["updated_at"] is not None
-
-    def test_patch_add_member(self):
-        response = client.patch("/api/v1/schedules/platform-engineering", json={
-            "add_members": [
-                {"name": "New Guy", "email": "new@test.com", "role": "primary"},
-            ],
-        })
-        assert response.status_code == 200
-        names = [m["name"] for m in response.json()["members"]]
-        assert "New Guy" in names
-
-    def test_patch_add_duplicate_member_ignored(self):
-        response = client.patch("/api/v1/schedules/platform-engineering", json={
-            "add_members": [
-                {"name": "Alice Martin", "email": "alice@company.com", "role": "primary"},
-            ],
-        })
-        assert response.status_code == 200
-        # Should not have duplicates
-        names = [m["name"] for m in response.json()["members"]]
-        assert names.count("Alice Martin") == 1
-
-    def test_patch_remove_member(self):
-        response = client.patch("/api/v1/schedules/platform-engineering", json={
-            "remove_members": ["Carol Chen"],
-        })
-        assert response.status_code == 200
-        names = [m["name"] for m in response.json()["members"]]
-        assert "Carol Chen" not in names
-
-    def test_patch_remove_all_primary_fails(self):
-        response = client.patch("/api/v1/schedules/platform-engineering", json={
-            "remove_members": ["Alice Martin", "Bob Dupont"],
-        })
-        assert response.status_code == 400
-        assert "primary" in response.json()["detail"].lower()
-
-    def test_patch_nonexistent_team(self):
-        response = client.patch("/api/v1/schedules/nonexistent", json={
-            "rotation_type": "daily",
-        })
-        assert response.status_code == 404
-
-    def test_patch_records_history(self):
-        client.patch("/api/v1/schedules/platform-engineering", json={
-            "rotation_type": "daily",
-        })
-        events = [e for e in oncall_history if e["event_type"] == "schedule_updated"]
-        assert len(events) >= 1
-        assert "rotation_type" in events[-1]["details"]
 
 
 # ============================================
@@ -340,6 +237,7 @@ class TestOnCallCurrent:
         assert response.status_code == 422  # Missing required param
 
     def test_get_current_oncall_daily_rotation(self):
+        # Create daily rotation schedule
         client.post("/api/v1/schedules", json={
             "team": "daily-oncall",
             "rotation_type": "daily",
@@ -367,7 +265,7 @@ class TestOnCallCurrent:
 
 
 # ============================================
-# Overrides (Extended with expiration)
+# Overrides
 # ============================================
 class TestOverrides:
     def test_set_override(self):
@@ -378,20 +276,7 @@ class TestOverrides:
             "reason": "Test override",
         })
         assert response.status_code == 200
-        data = response.json()
-        assert data["status"] == "override_set"
-        assert "expires_at" in data
-        assert data["duration_hours"] == DEFAULT_OVERRIDE_HOURS
-
-    def test_set_override_custom_duration(self):
-        response = client.post("/api/v1/oncall/override", json={
-            "team": "platform-engineering",
-            "user_name": "Override User",
-            "user_email": "override@test.com",
-            "duration_hours": 24,
-        })
-        assert response.status_code == 200
-        assert response.json()["duration_hours"] == 24
+        assert response.json()["status"] == "override_set"
 
     def test_override_affects_current_oncall(self):
         client.post("/api/v1/oncall/override", json={
@@ -399,35 +284,20 @@ class TestOverrides:
             "user_name": "Override User",
             "user_email": "override@test.com",
         })
+
         response = client.get("/api/v1/oncall/current?team=platform-engineering")
         data = response.json()
         assert data["primary"]["name"] == "Override User"
         assert data["primary"]["override"] is True
-        assert "expires_at" in data["primary"]
-
-    def test_override_expired_returns_rotation(self):
-        """Override that expired should fall back to rotation."""
-        now = datetime.now(timezone.utc)
-        overrides_db["platform-engineering"] = {
-            "user_name": "Expired User",
-            "user_email": "expired@test.com",
-            "reason": "Old override",
-            "duration_hours": 1,
-            "created_at": (now - timedelta(hours=2)).isoformat(),
-            "expires_at": (now - timedelta(hours=1)).isoformat(),
-        }
-        response = client.get("/api/v1/oncall/current?team=platform-engineering")
-        data = response.json()
-        # Should NOT be the override user (it expired)
-        assert data["primary"]["name"] != "Expired User"
-        assert data["primary"].get("override") is not True
 
     def test_remove_override(self):
+        # Set override first
         client.post("/api/v1/oncall/override", json={
             "team": "platform-engineering",
             "user_name": "Override User",
             "user_email": "override@test.com",
         })
+
         response = client.delete("/api/v1/oncall/override/platform-engineering")
         assert response.status_code == 200
         assert response.json()["status"] == "override_removed"
@@ -443,53 +313,6 @@ class TestOverrides:
             "user_email": "user@test.com",
         })
         assert response.status_code == 404
-
-    def test_list_active_overrides(self):
-        client.post("/api/v1/oncall/override", json={
-            "team": "platform-engineering",
-            "user_name": "Override User",
-            "user_email": "override@test.com",
-        })
-        response = client.get("/api/v1/oncall/overrides")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) == 1
-        assert data[0]["team"] == "platform-engineering"
-        assert data[0]["user_name"] == "Override User"
-        assert "expires_at" in data[0]
-
-    def test_list_active_overrides_excludes_expired(self):
-        now = datetime.now(timezone.utc)
-        overrides_db["platform-engineering"] = {
-            "user_name": "Expired",
-            "user_email": "expired@test.com",
-            "reason": "test",
-            "duration_hours": 1,
-            "created_at": (now - timedelta(hours=2)).isoformat(),
-            "expires_at": (now - timedelta(hours=1)).isoformat(),
-        }
-        response = client.get("/api/v1/oncall/overrides")
-        assert response.status_code == 200
-        assert len(response.json()) == 0  # expired override cleaned up
-
-    def test_override_records_history(self):
-        client.post("/api/v1/oncall/override", json={
-            "team": "platform-engineering",
-            "user_name": "Override User",
-            "user_email": "override@test.com",
-        })
-        events = [e for e in oncall_history if e["event_type"] == "override_start"]
-        assert len(events) >= 1
-
-    def test_remove_override_records_history(self):
-        client.post("/api/v1/oncall/override", json={
-            "team": "platform-engineering",
-            "user_name": "Override User",
-            "user_email": "override@test.com",
-        })
-        client.delete("/api/v1/oncall/override/platform-engineering")
-        events = [e for e in oncall_history if e["event_type"] == "override_end"]
-        assert len(events) >= 1
 
 
 # ============================================
@@ -516,6 +339,7 @@ class TestEscalation:
             "incident_id": "inc-002",
         })
         data = response.json()
+        # Should escalate to secondary
         assert data["escalated_to"] is not None
         assert "name" in data["escalated_to"]
         assert "email" in data["escalated_to"]
@@ -529,16 +353,8 @@ class TestEscalation:
         data = response.json()
         assert data["escalated_to"] is None
 
-    def test_escalate_records_history(self):
-        client.post("/api/v1/escalate", json={
-            "team": "platform-engineering",
-            "incident_id": "inc-history",
-        })
-        events = [e for e in oncall_history if e["event_type"] == "escalation"]
-        assert len(events) >= 1
-        assert events[-1]["details"]["incident_id"] == "inc-history"
-
     def test_list_escalations(self):
+        # Create some escalations
         client.post("/api/v1/escalate", json={
             "team": "platform-engineering",
             "incident_id": "inc-010",
@@ -547,6 +363,7 @@ class TestEscalation:
             "team": "platform-engineering",
             "incident_id": "inc-011",
         })
+
         response = client.get("/api/v1/escalations")
         assert response.status_code == 200
         data = response.json()
@@ -562,21 +379,12 @@ class TestEscalation:
             "team": "other-team",
             "incident_id": "inc-021",
         })
+
         response = client.get("/api/v1/escalations?team=platform-engineering")
         assert response.status_code == 200
         data = response.json()
         for item in data:
             assert item["team"] == "platform-engineering"
-
-    def test_list_escalations_with_limit(self):
-        for i in range(5):
-            client.post("/api/v1/escalate", json={
-                "team": "platform-engineering",
-                "incident_id": f"inc-limit-{i}",
-            })
-        response = client.get("/api/v1/escalations?limit=2")
-        assert response.status_code == 200
-        assert len(response.json()) == 2
 
     def test_escalation_default_reason(self):
         response = client.post("/api/v1/escalate", json={
@@ -585,91 +393,6 @@ class TestEscalation:
         })
         data = response.json()
         assert "No acknowledgment" in data["message"] or "escalat" in data["message"].lower()
-
-
-# ============================================
-# On-Call History (NEW)
-# ============================================
-class TestHistory:
-    def test_history_empty(self):
-        response = client.get("/api/v1/oncall/history")
-        assert response.status_code == 200
-        assert isinstance(response.json(), list)
-
-    def test_history_after_schedule_create(self):
-        client.post("/api/v1/schedules", json={
-            "team": "hist-team",
-            "rotation_type": "weekly",
-            "members": [
-                {"name": "Hist User", "email": "hist@test.com", "role": "primary"},
-            ],
-        })
-        response = client.get("/api/v1/oncall/history?team=hist-team")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) >= 1
-        assert data[-1]["event_type"] == "schedule_created"
-
-    def test_history_after_escalation(self):
-        client.post("/api/v1/escalate", json={
-            "team": "platform-engineering",
-            "incident_id": "hist-esc-001",
-        })
-        response = client.get("/api/v1/oncall/history?event_type=escalation")
-        assert response.status_code == 200
-        data = response.json()
-        assert len(data) >= 1
-
-    def test_history_after_override(self):
-        client.post("/api/v1/oncall/override", json={
-            "team": "platform-engineering",
-            "user_name": "Hist Override",
-            "user_email": "hist@test.com",
-        })
-        response = client.get("/api/v1/oncall/history?event_type=override_start")
-        assert response.status_code == 200
-        assert len(response.json()) >= 1
-
-    def test_history_filter_by_team(self):
-        client.post("/api/v1/schedules", json={
-            "team": "team-a",
-            "rotation_type": "weekly",
-            "members": [{"name": "A", "email": "a@t.com", "role": "primary"}],
-        })
-        client.post("/api/v1/schedules", json={
-            "team": "team-b",
-            "rotation_type": "weekly",
-            "members": [{"name": "B", "email": "b@t.com", "role": "primary"}],
-        })
-        response = client.get("/api/v1/oncall/history?team=team-a")
-        data = response.json()
-        for event in data:
-            assert event["team"] == "team-a"
-
-    def test_history_with_limit(self):
-        for i in range(5):
-            client.post("/api/v1/schedules", json={
-                "team": f"limit-team-{i}",
-                "rotation_type": "weekly",
-                "members": [{"name": f"User{i}", "email": f"u{i}@t.com", "role": "primary"}],
-            })
-        response = client.get("/api/v1/oncall/history?limit=2")
-        assert response.status_code == 200
-        assert len(response.json()) == 2
-
-    def test_history_event_structure(self):
-        client.post("/api/v1/escalate", json={
-            "team": "platform-engineering",
-            "incident_id": "struct-test",
-        })
-        response = client.get("/api/v1/oncall/history")
-        data = response.json()
-        event = data[-1]
-        assert "event_id" in event
-        assert "event_type" in event
-        assert "team" in event
-        assert "timestamp" in event
-        assert "details" in event
 
 
 # ============================================
@@ -698,34 +421,8 @@ class TestTeams:
             "user_name": "Override User",
             "user_email": "override@test.com",
         })
+
         response = client.get("/api/v1/teams")
         data = response.json()
         pe_team = next(t for t in data if t["team"] == "platform-engineering")
         assert pe_team["has_override"] is True
-
-
-# ============================================
-# Configuration (env-driven, no hardcode)
-# ============================================
-class TestConfiguration:
-    def test_service_name_from_env(self):
-        from main import SERVICE_NAME
-        assert SERVICE_NAME == "oncall-service"
-
-    def test_service_version_from_env(self):
-        from main import SERVICE_VERSION
-        assert SERVICE_VERSION == "2.0.0"
-
-    def test_default_override_hours(self):
-        from main import DEFAULT_OVERRIDE_HOURS
-        assert isinstance(DEFAULT_OVERRIDE_HOURS, int)
-        assert DEFAULT_OVERRIDE_HOURS > 0
-
-    def test_notification_timeout_is_float(self):
-        from main import NOTIFICATION_TIMEOUT
-        assert isinstance(NOTIFICATION_TIMEOUT, float)
-
-    def test_cors_origins_is_list(self):
-        from main import CORS_ORIGINS
-        assert isinstance(CORS_ORIGINS, list)
-        assert len(CORS_ORIGINS) >= 1

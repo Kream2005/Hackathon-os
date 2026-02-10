@@ -97,7 +97,7 @@
       ]
     },
     {
-      "title": "📊 Incident Volume by Service",
+      "title": "📊 Alert Volume by Severity",
       "type": "barchart",
       "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
       "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" },
@@ -122,8 +122,8 @@
       },
       "targets": [
         {
-          "expr": "sum by (service) (alerts_received_total)",
-          "legendFormat": "{{service}}",
+          "expr": "sum by (severity) (alerts_received_total)",
+          "legendFormat": "{{severity}}",
           "refId": "A"
         }
       ]
@@ -288,7 +288,7 @@
       },
       "targets": [
         {
-          "expr": "oncall_schedules_created_total",
+          "expr": "oncall_active_schedules",
           "legendFormat": "Schedules",
           "refId": "A"
         }
