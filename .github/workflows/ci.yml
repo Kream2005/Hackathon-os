@@ -254,14 +254,14 @@ jobs:
 
       - name: Start all services
         run: |
-          docker-compose up -d --build
+          docker compose up -d --build
           echo "⏳ Waiting for services to be healthy..."
           sleep 30
 
       - name: Wait for healthy services
         run: |
           for i in $(seq 1 30); do
-            HEALTHY=$(docker-compose ps | grep -c "healthy" || true)
+            HEALTHY=$(docker compose ps | grep -c "healthy" || true)
             echo "Attempt $i: $HEALTHY services healthy"
             if [ "$HEALTHY" -ge 6 ]; then
               echo "✅ All services healthy!"
@@ -269,16 +269,16 @@ jobs:
             fi
             sleep 10
           done
-          docker-compose ps
+          docker compose ps
 
       - name: Test API Gateway health
         run: |
-          curl -sf http://localhost:8085/health || (echo "❌ API Gateway not healthy" && exit 1)
+          curl -sf http://localhost:8080/health || (echo "❌ API Gateway not healthy" && exit 1)
           echo "✅ API Gateway healthy"
 
       - name: Test Login
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8085/auth/login \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/auth/login \
             -H "Content-Type: application/json" \
             -d '{"username":"admin","password":"admin"}')
           echo "Login response: $RESPONSE"
@@ -286,7 +286,7 @@ jobs:
 
       - name: Test Incident Creation
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8085/incidents/ \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/incidents/ \
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
@@ -300,14 +300,14 @@ jobs:
 
       - name: Test Get Incidents
         run: |
-          RESPONSE=$(curl -sf http://localhost:8085/incidents/ \
+          RESPONSE=$(curl -sf http://localhost:8080/incidents/ \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Get incidents: $RESPONSE"
           echo "✅ Get incidents works"
 
       - name: Test Alert Ingestion
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8085/alerts/ \
+          RESPONSE=$(curl -sf -X POST http://localhost:8080/alerts/ \
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
@@ -321,14 +321,14 @@ jobs:
 
       - name: Test On-Call Schedules
         run: |
-          RESPONSE=$(curl -sf http://localhost:8085/oncall/schedules \
+          RESPONSE=$(curl -sf http://localhost:8080/oncall/schedules \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Schedules: $RESPONSE"
           echo "✅ On-Call service works"
 
       - name: Test Notifications
         run: |
-          RESPONSE=$(curl -sf http://localhost:8085/notifications/ \
+          RESPONSE=$(curl -sf http://localhost:8080/notifications/ \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Notifications: $RESPONSE"
           echo "✅ Notification service works"
@@ -345,11 +345,11 @@ jobs:
         if: failure()
         run: |
           echo "📋 Service logs:"
-          docker-compose logs --tail=50
+          docker compose logs --tail=50
 
       - name: Cleanup
         if: always()
-        run: docker-compose down -v
+        run: docker compose down -v
 
   # =============================================
   # 6. Deploy (only on main)
