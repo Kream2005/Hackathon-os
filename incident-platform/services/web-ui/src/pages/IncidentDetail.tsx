@@ -53,7 +53,7 @@ export default function IncidentDetail() {
   async function handleNote() {
     if (!noteText.trim()) return
     setUpdating(true)
-    try { await updateIncident(id!, { note: { author: 'Operator', content: noteText.trim() } }); setNoteText(''); await load() }
+    try { await updateIncident(id!, { notes: noteText.trim() }); setNoteText(''); await load() }
     catch (e) { console.error(e) }
     finally { setUpdating(false) }
   }

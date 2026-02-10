@@ -1,6 +1,6 @@
 import { useState, useEffect, useMemo } from 'react'
 import { Link } from 'react-router-dom'
-import { fetchAlerts, ingestAlert } from '../api-client'
+import { fetchAlerts, ingestAlert, fetchSchedules } from '../api-client'
 import type { Alert } from '../types'
 import { Zap, Search, Loader2, Plus, Send, X, Link as LinkIcon } from 'lucide-react'
 
@@ -28,6 +28,7 @@ export default function Alerts() {
   const [dialogOpen, setDialogOpen] = useState(false)
   const [submitting, setSubmitting] = useState(false)
   const [form, setForm] = useState({ service: '', severity: 'medium', message: '', source: 'manual' })
+  const [teams, setTeams] = useState<string[]>([])
 
   async function load() {
     try { const data = await fetchAlerts(); setAlerts(data); setError(null) }
@@ -35,7 +36,11 @@ export default function Alerts() {
     finally { setLoading(false) }
   }
 
-  useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id) }, [])
+  useEffect(() => {
+    load()
+    fetchSchedules().then(s => setTeams(s.map(x => x.team))).catch(() => {})
+    const id = setInterval(load, 10000); return () => clearInterval(id)
+  }, [])
 
   const filtered = useMemo(() => {
     let r = alerts
@@ -152,8 +157,11 @@ export default function Alerts() {
             <div className="flex flex-col gap-4">
               <div>
                 <label className="text-sm font-medium text-foreground">Service</label>
-                <input placeholder="e.g. frontend-api" value={form.service} onChange={e => setForm({...form, service: e.target.value})}
-                  className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                <select value={form.service} onChange={e => setForm({...form, service: e.target.value})}
+                  className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
+                  <option value="">Select a service…</option>
+                  {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Severity</label>
@@ -169,8 +177,15 @@ export default function Alerts() {
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Source</label>
-                <input placeholder="e.g. prometheus, grafana, manual" value={form.source} onChange={e => setForm({...form, source: e.target.value})}
-                  className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                <select value={form.source} onChange={e => setForm({...form, source: e.target.value})}
+                  className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
+                  <option value="manual">Manual</option>
+                  <option value="prometheus">Prometheus</option>
+                  <option value="grafana">Grafana</option>
+                  <option value="datadog">Datadog</option>
+                  <option value="cloudwatch">CloudWatch</option>
+                  <option value="pagerduty">PagerDuty</option>
+                </select>
               </div>
             </div>
             <div className="mt-6 flex justify-end gap-2">
