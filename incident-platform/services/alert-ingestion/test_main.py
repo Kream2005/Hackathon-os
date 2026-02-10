@@ -48,6 +48,38 @@ def _mock_incident_service_success():
     mock_resp.json.return_value = {"id": str(uuid.uuid4())}
     mock_client_instance = MagicMock()
     mock_client_instance.post.return_value = mock_resp
+    # find-open returns no match by default
+    find_resp = MagicMock()
+    find_resp.status_code = 200
+    find_resp.json.return_value = {"incident_id": None}
+    mock_client_instance.get.return_value = find_resp
+    # link-alert returns ok
+    link_resp = MagicMock()
+    link_resp.status_code = 200
+    mock_client_instance.post.side_effect = None  # reset
+    # Set up post to return different things based on URL
+    def _post_handler(url, **kwargs):
+        if "link-alert" in url:
+            return link_resp
+        return mock_resp
+    mock_client_instance.post.side_effect = _post_handler
+
+    ctx = MagicMock()
+    ctx.__enter__ = MagicMock(return_value=mock_client_instance)
+    ctx.__exit__ = MagicMock(return_value=False)
+    return patch("main.httpx.Client", return_value=ctx)
+
+
+def _mock_incident_service_with_existing(existing_id):
+    """Return a patch that simulates find-open returning an existing incident."""
+    mock_client_instance = MagicMock()
+    find_resp = MagicMock()
+    find_resp.status_code = 200
+    find_resp.json.return_value = {"incident_id": existing_id}
+    mock_client_instance.get.return_value = find_resp
+    link_resp = MagicMock()
+    link_resp.status_code = 200
+    mock_client_instance.post.return_value = link_resp
     ctx = MagicMock()
     ctx.__enter__ = MagicMock(return_value=mock_client_instance)
     ctx.__exit__ = MagicMock(return_value=False)
@@ -114,7 +146,6 @@ class TestFingerprint:
 class TestCreateAlert:
     def test_new_incident_when_no_existing(self):
         """No open incident matching → should call incident-management to create one."""
-        _mock_conn.execute.return_value.fetchone.return_value = None
         with _mock_incident_service_success():
             r = client.post("/api/v1/alerts", json=VALID_ALERT)
         assert r.status_code == 201
@@ -125,48 +156,43 @@ class TestCreateAlert:
         assert data["incident_id"]
 
     def test_existing_incident_correlation(self):
-        """Open incident exists within window → alert attached, no new incident created."""
+        """Open incident exists within window → alert attached via HTTP, no new incident created."""
         existing_id = str(uuid.uuid4())
-        _mock_conn.execute.return_value.fetchone.return_value = (existing_id,)
-        r = client.post("/api/v1/alerts", json=VALID_ALERT)
+        with _mock_incident_service_with_existing(existing_id):
+            r = client.post("/api/v1/alerts", json=VALID_ALERT)
         assert r.status_code == 201
         data = r.json()
         assert data["action"] == "existing_incident"
         assert data["incident_id"] == existing_id
 
-    def test_fallback_to_local_creation(self):
-        """When incident-management is unreachable, incident created locally."""
-        _mock_conn.execute.return_value.fetchone.return_value = None
+    def test_graceful_when_incident_service_down(self):
+        """When incident-management is unreachable, alert is stored without incident link."""
         with patch("main.httpx.Client", side_effect=Exception("connection refused")):
             r = client.post("/api/v1/alerts", json=VALID_ALERT)
         assert r.status_code == 201
         data = r.json()
         assert data["action"] == "new_incident"
-        assert data["incident_id"]  # created locally
+        assert data["status"] == "accepted"
 
     def test_custom_timestamp_accepted(self):
-        _mock_conn.execute.return_value.fetchone.return_value = None
         payload = {**VALID_ALERT, "timestamp": "2026-02-09T10:00:00Z"}
         with _mock_incident_service_success():
             r = client.post("/api/v1/alerts", json=payload)
         assert r.status_code == 201
 
     def test_custom_source_accepted(self):
-        _mock_conn.execute.return_value.fetchone.return_value = None
         payload = {**VALID_ALERT, "source": "prometheus"}
         with _mock_incident_service_success():
             r = client.post("/api/v1/alerts", json=payload)
         assert r.status_code == 201
 
     def test_empty_labels_default(self):
-        _mock_conn.execute.return_value.fetchone.return_value = None
         payload = {"service": "svc", "severity": "low", "message": "test"}
         with _mock_incident_service_success():
             r = client.post("/api/v1/alerts", json=payload)
         assert r.status_code == 201
 
     def test_x_request_id_header_returned(self):
-        _mock_conn.execute.return_value.fetchone.return_value = None
         with _mock_incident_service_success():
             r = client.post("/api/v1/alerts", json=VALID_ALERT, headers={"X-Request-ID": "req-123"})
         assert r.headers["X-Request-ID"] == "req-123"

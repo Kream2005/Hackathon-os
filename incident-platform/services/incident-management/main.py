@@ -35,10 +35,11 @@ from sqlalchemy.exc import SQLAlchemyError
 # ── Configuration ──────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://hackathon:hackathon2026@database:5432/incident_platform",
+    "postgresql://hackathon:hackathon2026@database:5432/incident_db",
 )
 ONCALL_SERVICE_URL = os.getenv("ONCALL_SERVICE_URL", "http://oncall-service:8003")
 NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
+ALERT_INGESTION_URL = os.getenv("ALERT_INGESTION_URL", "http://alert-ingestion:8001")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 
 # ── Structured JSON Logger ─────────────────────────────────────────────────
@@ -250,6 +251,22 @@ def _add_timeline_event(conn, incident_id: str, event_type: str, actor: str = "s
     )
 
 
+def _fetch_linked_alerts(incident_id: str) -> List[Dict[str, Any]]:
+    """Retrieve alerts linked to an incident from the alert-ingestion service (DB-per-service)."""
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            resp = client.get(
+                f"{ALERT_INGESTION_URL}/api/v1/alerts",
+                params={"incident_id": incident_id, "per_page": 200},
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("alerts", [])
+    except Exception as exc:
+        logger.warning("Alert-ingestion service unreachable: %s", exc)
+    return []
+
+
 # ── Lifespan ──────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(application: FastAPI):
@@ -418,6 +435,66 @@ def list_incidents(
     )
 
 
+# ── Correlation Endpoints (DB-per-service support) ────────────────────────
+@app.get("/api/v1/incidents/find-open", tags=["incidents"])
+def find_open_incident(
+    service: str = Query(...),
+    severity: str = Query(...),
+    window_minutes: int = Query(default=5, ge=1),
+):
+    """Find an open incident matching service/severity within the correlation window.
+    Used by alert-ingestion to avoid direct cross-DB queries (DB-per-service pattern)."""
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("""
+                SELECT id FROM incidents
+                WHERE service  = :service
+                  AND severity = :severity
+                  AND status  != 'resolved'
+                  AND created_at > NOW() - MAKE_INTERVAL(mins => :window)
+                ORDER BY created_at DESC
+                LIMIT 1
+            """),
+            {"service": service.lower(), "severity": severity.lower(), "window": window_minutes},
+        ).fetchone()
+
+    if not row:
+        return {"incident_id": None}
+    return {"incident_id": str(row[0])}
+
+
+@app.post("/api/v1/incidents/{incident_id}/link-alert", status_code=200, tags=["incidents"])
+def link_alert_to_incident(incident_id: str, body: dict):
+    """Increment alert_count and add a timeline event. Called by alert-ingestion
+    when correlating an alert to an existing incident (DB-per-service pattern)."""
+    try:
+        uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident ID format")
+
+    alert_id = body.get("alert_id", "unknown")
+    fingerprint = body.get("fingerprint", "")
+
+    with engine.begin() as conn:
+        row = conn.execute(
+            text("SELECT 1 FROM incidents WHERE id = :id"), {"id": incident_id}
+        ).fetchone()
+        if not row:
+            raise HTTPException(status_code=404, detail="Incident not found")
+
+        conn.execute(
+            text("UPDATE incidents SET alert_count = alert_count + 1 WHERE id = :id"),
+            {"id": incident_id},
+        )
+        _add_timeline_event(conn, incident_id, "alert_correlated", actor="alert-ingestion", detail={
+            "alert_id": alert_id, "fingerprint": fingerprint,
+        })
+
+    logger.info("Alert %s linked to incident %s", alert_id, incident_id)
+    return {"status": "linked", "incident_id": incident_id, "alert_id": alert_id}
+
+
+# ── Detail & Lifecycle Endpoints ──────────────────────────────────────────
 @app.get("/api/v1/incidents/{incident_id}", response_model=IncidentDetail, tags=["incidents"])
 def get_incident(incident_id: str):
     """Get incident detail with linked alerts, notes, and full timeline."""
@@ -435,23 +512,8 @@ def get_incident(incident_id: str):
 
         incident = _row_to_dict(row)
 
-        # Linked alerts
-        alert_rows = conn.execute(
-            text("""
-                SELECT id, service, severity, message, source, fingerprint, timestamp, created_at
-                FROM alerts WHERE incident_id = :iid ORDER BY created_at
-            """),
-            {"iid": incident_id},
-        ).fetchall()
-        incident["alerts"] = [
-            {
-                "id": str(a[0]), "service": a[1], "severity": a[2], "message": a[3],
-                "source": a[4], "fingerprint": a[5],
-                "timestamp": a[6].isoformat() if a[6] else None,
-                "created_at": a[7].isoformat() if a[7] else None,
-            }
-            for a in alert_rows
-        ]
+        # Linked alerts — fetched from alert-ingestion service (DB-per-service)
+        incident["alerts"] = _fetch_linked_alerts(incident_id)
 
         # Notes
         note_rows = conn.execute(

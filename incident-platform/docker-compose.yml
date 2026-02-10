@@ -8,7 +8,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
     volumes:
       - db-data:/var/lib/postgresql/data
-      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./database/init.sh:/docker-entrypoint-initdb.d/init.sh
     ports:
       - "5432:5432"
     networks:
@@ -30,7 +30,7 @@ services:
           memory: 256M
           cpus: '0.50'
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${ALERT_DB_URL}
       INCIDENT_MANAGEMENT_URL: http://incident-management:8002
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
     depends_on:
@@ -57,9 +57,10 @@ services:
           memory: 256M
           cpus: '0.50'
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${INCIDENT_DB_URL}
       ONCALL_SERVICE_URL: http://oncall-service:8003
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
+      ALERT_INGESTION_URL: http://alert-ingestion:8001
     depends_on:
       database:
         condition: service_healthy
@@ -84,8 +85,6 @@ services:
         limits:
           memory: 256M
           cpus: '0.50'
-    environment:
-      DATABASE_URL: ${DATABASE_URL}
     depends_on:
       database:
         condition: service_healthy
@@ -110,7 +109,7 @@ services:
           memory: 256M
           cpus: '0.50'
     environment:
-      DATABASE_URL: ${DATABASE_URL}
+      DATABASE_URL: ${NOTIFICATION_DB_URL}
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
     depends_on:
       database:

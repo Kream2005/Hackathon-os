@@ -32,7 +32,7 @@ from sqlalchemy.exc import SQLAlchemyError
 # ── Configuration ──────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://hackathon:hackathon2026@database:5432/incident_platform",
+    "postgresql://hackathon:hackathon2026@database:5432/alert_db",
 )
 INCIDENT_MANAGEMENT_URL = os.getenv(
     "INCIDENT_MANAGEMENT_URL", "http://incident-management:8002"
@@ -240,21 +240,24 @@ def _compute_fingerprint(service: str, severity: str, message: str) -> str:
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def _find_existing_incident(conn, service: str, severity: str) -> Optional[str]:
-    """Return the UUID of an open incident matching the correlation window."""
-    row = conn.execute(
-        text("""
-            SELECT id FROM incidents
-            WHERE service  = :service
-              AND severity = :severity
-              AND status  != 'resolved'
-              AND created_at > NOW() - MAKE_INTERVAL(mins => :window)
-            ORDER BY created_at DESC
-            LIMIT 1
-        """),
-        {"service": service, "severity": severity, "window": CORRELATION_WINDOW_MINUTES},
-    ).fetchone()
-    return str(row[0]) if row else None
+def _find_existing_incident(service: str, severity: str) -> Optional[str]:
+    """Ask incident-management for an open incident matching the correlation window (DB-per-service)."""
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            resp = client.get(
+                f"{INCIDENT_MANAGEMENT_URL}/api/v1/incidents/find-open",
+                params={
+                    "service": service,
+                    "severity": severity,
+                    "window_minutes": CORRELATION_WINDOW_MINUTES,
+                },
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                return data.get("incident_id")  # None if no match
+    except Exception as exc:
+        logger.warning("Incident-management unreachable (find-open): %s", exc)
+    return None
 
 
 def _create_incident_remote(service: str, severity: str, message: str) -> Optional[str]:
@@ -278,38 +281,16 @@ def _create_incident_remote(service: str, severity: str, message: str) -> Option
     return None
 
 
-def _create_incident_locally(conn, service: str, severity: str, message: str) -> str:
-    """Fallback: write the incident row directly when incident-management is down."""
-    incident_id = str(uuid.uuid4())
-    conn.execute(
-        text("""
-            INSERT INTO incidents (id, title, service, severity, status, alert_count, created_at)
-            VALUES (:id, :title, :service, :severity, 'open', 0, NOW())
-        """),
-        {
-            "id": incident_id,
-            "title": f"[{severity.upper()}] {service}: {message[:120]}",
-            "service": service,
-            "severity": severity,
-        },
-    )
-    # Record timeline event for local creation
-    conn.execute(
-        text("""
-            INSERT INTO incident_timeline (id, incident_id, event_type, actor, detail, created_at)
-            VALUES (:tid, :iid, 'created', 'alert-ingestion', :detail, NOW())
-        """),
-        {"tid": str(uuid.uuid4()), "iid": incident_id, "detail": json.dumps({"fallback": True})},
-    )
-    return incident_id
-
-
-def _increment_alert_count(conn, incident_id: str):
-    """Bump the denormalised alert_count on the incident."""
-    conn.execute(
-        text("UPDATE incidents SET alert_count = alert_count + 1 WHERE id = :id"),
-        {"id": incident_id},
-    )
+def _link_alert_to_incident(incident_id: str, alert_id: str, fingerprint: str):
+    """Tell incident-management to bump alert_count and add timeline event (DB-per-service)."""
+    try:
+        with httpx.Client(timeout=3.0) as client:
+            client.post(
+                f"{INCIDENT_MANAGEMENT_URL}/api/v1/incidents/{incident_id}/link-alert",
+                json={"alert_id": alert_id, "fingerprint": fingerprint},
+            )
+    except Exception as exc:
+        logger.warning("Failed to link alert to incident %s: %s", incident_id, exc)
 
 
 def _notify_alert(incident_id: str, severity: str, service: str, message: str):
@@ -340,7 +321,11 @@ def _notify_alert(incident_id: str, severity: str, service: str, message: str):
     responses={201: {"description": "Alert accepted and correlated"}},
 )
 def create_alert(alert: AlertIn, request: Request):
-    """Receive a new alert, correlate it to an existing or new incident."""
+    """Receive a new alert, correlate it to an existing or new incident.
+    
+    DB-per-service: alert-ingestion only writes to its own alert_db.
+    Incident correlation and linking happens via HTTP to incident-management.
+    """
     with alert_processing_seconds.time():
         severity = alert.severity
         service = alert.service
@@ -353,25 +338,23 @@ def create_alert(alert: AlertIn, request: Request):
         incident_id: Optional[str] = None
         action = "new_incident"
 
+        # ── Correlation via HTTP (DB-per-service) ──
+        existing = _find_existing_incident(service, severity)
+
+        if existing:
+            incident_id = existing
+            action = "existing_incident"
+            _link_alert_to_incident(incident_id, alert_id, fingerprint)
+        else:
+            incident_id = _create_incident_remote(service, severity, alert.message)
+            if incident_id:
+                _link_alert_to_incident(incident_id, alert_id, fingerprint)
+            else:
+                logger.warning("Could not create incident for alert %s — stored without incident link", alert_id)
+
+        # ── Store alert in own database (alert_db) ──
         try:
-            with engine.begin() as conn:  # auto-commit / auto-rollback transaction
-                # ── Correlation ──
-                existing = _find_existing_incident(conn, service, severity)
-
-                if existing:
-                    incident_id = existing
-                    action = "existing_incident"
-                    _increment_alert_count(conn, incident_id)
-                else:
-                    incident_id = _create_incident_remote(service, severity, alert.message)
-                    if incident_id:
-                        # bump count on the remotely-created incident
-                        _increment_alert_count(conn, incident_id)
-                    else:
-                        incident_id = _create_incident_locally(conn, service, severity, alert.message)
-                        _increment_alert_count(conn, incident_id)
-
-                # ── Store alert ──
+            with engine.begin() as conn:
                 conn.execute(
                     text("""
                         INSERT INTO alerts
@@ -393,24 +376,8 @@ def create_alert(alert: AlertIn, request: Request):
                         "incident_id": incident_id,
                     },
                 )
-
-                # ── Timeline entry for correlation ──
-                if existing:
-                    conn.execute(
-                        text("""
-                            INSERT INTO incident_timeline
-                                (id, incident_id, event_type, actor, detail, created_at)
-                            VALUES (:tid, :iid, 'alert_correlated', 'alert-ingestion', :detail, NOW())
-                        """),
-                        {
-                            "tid": str(uuid.uuid4()),
-                            "iid": incident_id,
-                            "detail": json.dumps({"alert_id": alert_id, "fingerprint": fingerprint}),
-                        },
-                    )
-
         except SQLAlchemyError as exc:
-            logger.error("Database error while processing alert: %s", exc)
+            logger.error("Database error while storing alert: %s", exc)
             raise HTTPException(status_code=500, detail="Database error while processing alert")
 
         alerts_correlated_total.labels(result=action).inc()

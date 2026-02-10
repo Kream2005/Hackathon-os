@@ -69,7 +69,19 @@ export default function Metrics() {
 
   if (loading) return <div className="flex items-center justify-center py-20"><Loader2 className="h-6 w-6 animate-spin text-muted-foreground" /><span className="ml-2 text-sm text-muted-foreground">Loading metrics…</span></div>
   if (error) return <div className="p-6"><div className="rounded-lg border border-destructive/50 bg-destructive/10 p-4 text-sm text-destructive">{error}</div></div>
-  if (!stats) return null
+  if (!stats) return (
+    <div className="flex flex-col gap-6 p-6">
+      <div>
+        <h1 className="text-2xl font-semibold text-foreground">SRE Performance Metrics</h1>
+        <p className="mt-1 text-sm text-muted-foreground">MTTA and MTTR trends, incident volume, and response time distribution</p>
+      </div>
+      <div className="flex flex-col items-center justify-center rounded-xl border border-border bg-card py-20 text-center">
+        <AlertTriangle className="mb-4 h-12 w-12 text-muted-foreground/40" />
+        <h3 className="text-lg font-medium text-foreground">No metrics data yet</h3>
+        <p className="mt-1 max-w-sm text-sm text-muted-foreground">Metrics will appear once incidents are created. Send an alert or create an incident from the Dashboard to get started.</p>
+      </div>
+    </div>
+  )
 
   const cards = [
     { title: 'Avg MTTA', value: stats.avgMtta > 0 ? `${Math.round(stats.avgMtta / 60)}m` : '--', sub: 'Mean Time to Acknowledge', icon: Timer },

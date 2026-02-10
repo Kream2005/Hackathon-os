@@ -174,14 +174,14 @@ class TestGetIncident:
 
     def test_found_with_children(self):
         iid = uuid.uuid4()
-        # First execute → incident row, then alerts, notes, timeline
+        # First execute → incident row, then notes, timeline (alerts now fetched via HTTP)
         _mock_conn.execute.side_effect = [
             MagicMock(fetchone=MagicMock(return_value=_incident_row(iid=iid))),
-            MagicMock(fetchall=MagicMock(return_value=[])),   # alerts
             MagicMock(fetchall=MagicMock(return_value=[])),   # notes
             MagicMock(fetchall=MagicMock(return_value=[])),   # timeline
         ]
-        r = client.get(f"/api/v1/incidents/{iid}")
+        with patch("main._fetch_linked_alerts", return_value=[]):
+            r = client.get(f"/api/v1/incidents/{iid}")
         assert r.status_code == 200
         d = r.json()
         assert d["id"] == str(iid)
@@ -325,3 +325,61 @@ class TestStateMachine:
         assert "resolved" in ALLOWED_TRANSITIONS["acknowledged"]
         assert "resolved" in ALLOWED_TRANSITIONS["in_progress"]
         assert len(ALLOWED_TRANSITIONS["resolved"]) == 0  # terminal
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# GET /api/v1/incidents/find-open  — CORRELATION ENDPOINT (DB-per-service)
+# ═══════════════════════════════════════════════════════════════════════════
+class TestFindOpenIncident:
+    def test_found(self):
+        iid = uuid.uuid4()
+        _mock_conn.execute.return_value.fetchone.return_value = (iid,)
+        r = client.get("/api/v1/incidents/find-open", params={
+            "service": "backend", "severity": "critical",
+        })
+        assert r.status_code == 200
+        assert r.json()["incident_id"] == str(iid)
+
+    def test_not_found(self):
+        _mock_conn.execute.return_value.fetchone.return_value = None
+        r = client.get("/api/v1/incidents/find-open", params={
+            "service": "backend", "severity": "low",
+        })
+        assert r.status_code == 200
+        assert r.json()["incident_id"] is None
+
+    def test_missing_params(self):
+        r = client.get("/api/v1/incidents/find-open")
+        assert r.status_code == 422
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# POST /api/v1/incidents/{id}/link-alert  — ALERT LINKING (DB-per-service)
+# ═══════════════════════════════════════════════════════════════════════════
+class TestLinkAlert:
+    def test_success(self):
+        iid = uuid.uuid4()
+        _mock_conn.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=(1,))),  # SELECT 1 exists
+            None,  # UPDATE alert_count
+            None,  # INSERT timeline
+        ]
+        r = client.post(f"/api/v1/incidents/{iid}/link-alert", json={
+            "alert_id": str(uuid.uuid4()), "fingerprint": "abc123",
+        })
+        assert r.status_code == 200
+        assert r.json()["status"] == "linked"
+
+    def test_not_found(self):
+        iid = uuid.uuid4()
+        _mock_conn.execute.side_effect = [
+            MagicMock(fetchone=MagicMock(return_value=None)),
+        ]
+        r = client.post(f"/api/v1/incidents/{iid}/link-alert", json={
+            "alert_id": str(uuid.uuid4()),
+        })
+        assert r.status_code == 404
+
+    def test_invalid_uuid(self):
+        r = client.post("/api/v1/incidents/bad-id/link-alert", json={})
+        assert r.status_code == 400
