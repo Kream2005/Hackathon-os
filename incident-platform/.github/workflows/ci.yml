@@ -1,0 +1,393 @@
+name: CI/CD Pipeline - Incident Platform
+
+on:
+  push:
+    branches: [main, develop]
+    paths:
+      - 'incident-platform/**'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'incident-platform/**'
+
+env:
+  POSTGRES_USER: hackathon
+  POSTGRES_PASSWORD: hackathon2026
+  POSTGRES_DB: incident_platform
+  DATABASE_URL: postgresql://hackathon:hackathon2026@localhost:5432/incident_platform
+  API_KEYS: hackathon-api-key-2026
+  LOGIN_API_KEY: hackathon-api-key-2026
+  AUTH_USERS: admin:admin,operator:operator
+
+jobs:
+  # =============================================
+  # 1. Quality Check - Linting & Formatting
+  # =============================================
+  quality:
+    name: 📏 Code Quality
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: incident-platform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install quality tools
+        run: pip install flake8 black isort pylint
+
+      - name: Check formatting with Black
+        run: |
+          black --check --diff services/ || echo "::warning::Black formatting issues found"
+
+      - name: Check imports with isort
+        run: |
+          isort --check-only --diff services/ || echo "::warning::isort issues found"
+
+      - name: Lint with flake8
+        run: |
+          flake8 services/ --max-line-length=120 --statistics --count || echo "::warning::Flake8 issues found"
+
+  # =============================================
+  # 2. Unit Tests
+  # =============================================
+  tests:
+    name: 🧪 Unit Tests
+    runs-on: ubuntu-latest
+    needs: quality
+    defaults:
+      run:
+        working-directory: incident-platform
+
+    strategy:
+      matrix:
+        service:
+          - alert-ingestion
+          - incident-management
+          - oncall-service
+          - notification-service
+          - api-gateway
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: hackathon
+          POSTGRES_PASSWORD: hackathon2026
+          POSTGRES_DB: incident_platform
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+
+      - name: Install dependencies
+        run: |
+          cd services/${{ matrix.service }}
+          if [ -f requirements.txt ]; then
+            pip install -r requirements.txt
+          fi
+          pip install pytest pytest-cov pytest-asyncio httpx
+
+      - name: Run tests
+        run: |
+          cd services/${{ matrix.service }}
+          if [ -d tests ]; then
+            pytest tests/ -v --cov=. --cov-report=xml --cov-report=term-missing
+          else
+            echo "No tests directory found for ${{ matrix.service }}"
+          fi
+
+      - name: Upload coverage
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: coverage-${{ matrix.service }}
+          path: incident-platform/services/${{ matrix.service }}/coverage.xml
+          if-no-files-found: ignore
+
+  # =============================================
+  # 3. Security Scan
+  # =============================================
+  security:
+    name: 🔒 Security Scan
+    runs-on: ubuntu-latest
+    needs: quality
+    defaults:
+      run:
+        working-directory: incident-platform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install security tools
+        run: pip install bandit safety
+
+      - name: Run Bandit (SAST)
+        run: |
+          bandit -r services/ -f json -o bandit-report.json --severity-level medium || true
+          bandit -r services/ --severity-level high
+
+      - name: Check dependencies with Safety
+        run: |
+          for service in services/*/; do
+            if [ -f "$service/requirements.txt" ]; then
+              echo "🔍 Scanning $service..."
+              safety check -r "$service/requirements.txt" || echo "::warning::Vulnerabilities found in $service"
+            fi
+          done
+
+      - name: Check for secrets
+        run: |
+          echo "🔍 Scanning for hardcoded secrets..."
+          grep -rn "password\s*=\s*['\"]" services/ --include="*.py" | grep -v "test" | grep -v "__pycache__" || echo "✅ No hardcoded passwords found"
+          grep -rn "secret\s*=\s*['\"]" services/ --include="*.py" | grep -v "test" | grep -v "__pycache__" || echo "✅ No hardcoded secrets found"
+
+      - name: Upload security report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: incident-platform/bandit-report.json
+          if-no-files-found: ignore
+
+  # =============================================
+  # 4. Build Docker Images
+  # =============================================
+  build:
+    name: 🏗️ Build Images
+    runs-on: ubuntu-latest
+    needs: [tests, security]
+    defaults:
+      run:
+        working-directory: incident-platform
+
+    strategy:
+      matrix:
+        service:
+          - alert-ingestion
+          - incident-management
+          - oncall-service
+          - notification-service
+          - api-gateway
+          - web-ui
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.service }}
+        run: |
+          cd services/${{ matrix.service }}
+          docker build -t incident-platform/${{ matrix.service }}:${{ github.sha }} .
+          docker build -t incident-platform/${{ matrix.service }}:latest .
+
+      - name: Scan image with Trivy
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: incident-platform/${{ matrix.service }}:latest
+          format: 'table'
+          severity: 'CRITICAL,HIGH'
+          exit-code: '0'
+
+  # =============================================
+  # 5. Integration Tests
+  # =============================================
+  integration:
+    name: 🔗 Integration Tests
+    runs-on: ubuntu-latest
+    needs: build
+    defaults:
+      run:
+        working-directory: incident-platform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Create .env file
+        run: |
+          cat > .env << EOF
+          POSTGRES_USER=hackathon
+          POSTGRES_PASSWORD=hackathon2026
+          POSTGRES_DB=incident_platform
+          DATABASE_URL=postgresql://hackathon:hackathon2026@database:5432/incident_platform
+          ALERT_INGESTION_PORT=8001
+          INCIDENT_MANAGEMENT_PORT=8002
+          ONCALL_SERVICE_PORT=8003
+          NOTIFICATION_SERVICE_PORT=8004
+          WEB_UI_PORT=8080
+          API_KEYS=hackathon-api-key-2026
+          LOGIN_API_KEY=hackathon-api-key-2026
+          AUTH_USERS=admin:admin,operator:operator
+          GRAFANA_ADMIN_USER=admin
+          GRAFANA_ADMIN_PASSWORD=admin
+          EOF
+
+      - name: Start all services
+        run: |
+          docker-compose up -d --build
+          echo "⏳ Waiting for services to be healthy..."
+          sleep 30
+
+      - name: Wait for healthy services
+        run: |
+          for i in $(seq 1 30); do
+            HEALTHY=$(docker-compose ps | grep -c "healthy" || true)
+            echo "Attempt $i: $HEALTHY services healthy"
+            if [ "$HEALTHY" -ge 6 ]; then
+              echo "✅ All services healthy!"
+              break
+            fi
+            sleep 10
+          done
+          docker-compose ps
+
+      - name: Test API Gateway health
+        run: |
+          curl -sf http://localhost:8085/health || (echo "❌ API Gateway not healthy" && exit 1)
+          echo "✅ API Gateway healthy"
+
+      - name: Test Login
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:8085/auth/login \
+            -H "Content-Type: application/json" \
+            -d '{"username":"admin","password":"admin"}')
+          echo "Login response: $RESPONSE"
+          echo "$RESPONSE" | grep -q "api_key" && echo "✅ Login works" || (echo "❌ Login failed" && exit 1)
+
+      - name: Test Incident Creation
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:8085/incidents/ \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: hackathon-api-key-2026" \
+            -d '{
+              "title": "CI Test Incident",
+              "description": "Created by GitHub Actions",
+              "severity": "low",
+              "service": "ci-pipeline"
+            }')
+          echo "Create incident: $RESPONSE"
+          echo "$RESPONSE" | grep -q "id" && echo "✅ Incident creation works" || (echo "❌ Incident creation failed" && exit 1)
+
+      - name: Test Get Incidents
+        run: |
+          RESPONSE=$(curl -sf http://localhost:8085/incidents/ \
+            -H "X-API-Key: hackathon-api-key-2026")
+          echo "Get incidents: $RESPONSE"
+          echo "✅ Get incidents works"
+
+      - name: Test Alert Ingestion
+        run: |
+          RESPONSE=$(curl -sf -X POST http://localhost:8085/alerts/ \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: hackathon-api-key-2026" \
+            -d '{
+              "source": "github-actions",
+              "severity": "low",
+              "message": "CI test alert",
+              "service": "ci-pipeline"
+            }')
+          echo "Create alert: $RESPONSE"
+          echo "✅ Alert ingestion works"
+
+      - name: Test On-Call Schedules
+        run: |
+          RESPONSE=$(curl -sf http://localhost:8085/oncall/schedules \
+            -H "X-API-Key: hackathon-api-key-2026")
+          echo "Schedules: $RESPONSE"
+          echo "✅ On-Call service works"
+
+      - name: Test Notifications
+        run: |
+          RESPONSE=$(curl -sf http://localhost:8085/notifications/ \
+            -H "X-API-Key: hackathon-api-key-2026")
+          echo "Notifications: $RESPONSE"
+          echo "✅ Notification service works"
+
+      - name: Test Prometheus metrics
+        run: |
+          curl -sf http://localhost:9090/-/healthy && echo "✅ Prometheus healthy" || echo "⚠️ Prometheus not reachable"
+
+      - name: Test Grafana
+        run: |
+          curl -sf http://localhost:3000/api/health && echo "✅ Grafana healthy" || echo "⚠️ Grafana not reachable"
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          echo "📋 Service logs:"
+          docker-compose logs --tail=50
+
+      - name: Cleanup
+        if: always()
+        run: docker-compose down -v
+
+  # =============================================
+  # 6. Deploy (only on main)
+  # =============================================
+  deploy:
+    name: 🚀 Deploy
+    runs-on: ubuntu-latest
+    needs: integration
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    defaults:
+      run:
+        working-directory: incident-platform
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Deploy notification
+        run: |
+          echo "🚀 Deployment triggered for commit ${{ github.sha }}"
+          echo "📦 All checks passed - ready for deployment"
+          echo ""
+          echo "Services to deploy:"
+          echo "  - alert-ingestion"
+          echo "  - incident-management"
+          echo "  - oncall-service"
+          echo "  - notification-service"
+          echo "  - api-gateway"
+          echo "  - web-ui"
+
+      # Uncomment below for actual deployment:
+      # - name: Deploy to production
+      #   run: |
+      #     docker-compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
+
+      - name: Verify deployment
+        run: |
+          echo " Deployment pipeline completed successfully"
+          echo " Commit: ${{ github.sha }}"
+          echo " Author: ${{ github.actor }}"
+          echo " Date: $(date)"

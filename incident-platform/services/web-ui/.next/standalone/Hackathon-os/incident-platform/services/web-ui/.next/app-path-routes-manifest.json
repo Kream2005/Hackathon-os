@@ -1,0 +1,11 @@
+{
+  "/_global-error/page": "/_global-error",
+  "/_not-found/page": "/_not-found",
+  "/alerts/page": "/alerts",
+  "/incidents/[id]/page": "/incidents/[id]",
+  "/incidents/page": "/incidents",
+  "/metrics-page/page": "/metrics-page",
+  "/notifications/page": "/notifications",
+  "/oncall/page": "/oncall",
+  "/page": "/"
+}
