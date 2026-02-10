@@ -595,6 +595,10 @@ def update_incident(incident_id: str, body: IncidentUpdate):
 @app.get("/api/v1/incidents/{incident_id}/metrics", tags=["incidents"])
 def get_incident_metrics(incident_id: str):
     """Get the SRE metrics (MTTA / MTTR) for a specific incident."""
+    try:
+        uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident ID format")
     with engine.connect() as conn:
         row = conn.execute(
             text("SELECT mtta_seconds, mttr_seconds, status, created_at, acknowledged_at, resolved_at FROM incidents WHERE id = :id"),
@@ -611,6 +615,77 @@ def get_incident_metrics(incident_id: str):
         "acknowledged_at": row[4].isoformat() if row[4] else None,
         "resolved_at": row[5].isoformat() if row[5] else None,
     }
+
+
+@app.post("/api/v1/incidents/{incident_id}/notes", status_code=201, tags=["incidents"])
+def add_incident_note(incident_id: str, body: dict):
+    """Add a note/comment to an existing incident."""
+    try:
+        uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident ID format")
+
+    author = body.get("author", "anonymous")
+    content = body.get("content", "")
+    if not content or not content.strip():
+        raise HTTPException(status_code=422, detail="Note content cannot be empty")
+
+    note_id = str(uuid.uuid4())
+    with engine.begin() as conn:
+        # Verify incident exists
+        exists = conn.execute(
+            text("SELECT 1 FROM incidents WHERE id = :id"), {"id": incident_id}
+        ).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Incident not found")
+
+        conn.execute(
+            text("""
+                INSERT INTO incident_notes (id, incident_id, author, content, created_at)
+                VALUES (:id, :iid, :author, :content, NOW())
+            """),
+            {"id": note_id, "iid": incident_id, "author": author, "content": content.strip()},
+        )
+        _add_timeline_event(conn, incident_id, "note_added", actor=author, detail={
+            "note_id": note_id, "preview": content[:100],
+        })
+
+    logger.info("Note %s added to incident %s by %s", note_id, incident_id, author)
+    return {"id": note_id, "incident_id": incident_id, "author": author, "content": content.strip()}
+
+
+@app.get("/api/v1/incidents/{incident_id}/timeline", tags=["incidents"])
+def get_incident_timeline(incident_id: str):
+    """Get the full audit timeline for an incident."""
+    try:
+        uuid.UUID(incident_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid incident ID format")
+
+    with engine.connect() as conn:
+        # Verify incident exists
+        exists = conn.execute(
+            text("SELECT 1 FROM incidents WHERE id = :id"), {"id": incident_id}
+        ).fetchone()
+        if not exists:
+            raise HTTPException(status_code=404, detail="Incident not found")
+
+        rows = conn.execute(
+            text("SELECT id, event_type, actor, detail, created_at FROM incident_timeline WHERE incident_id = :iid ORDER BY created_at"),
+            {"iid": incident_id},
+        ).fetchall()
+
+    timeline = [
+        {
+            "id": str(r[0]),
+            "event_type": r[1],
+            "actor": r[2],
+            "detail": r[3] if isinstance(r[3], dict) else json.loads(r[3]) if r[3] else {},
+            "created_at": r[4].isoformat() if r[4] else None,
+        }
+        for r in rows
+    ]
+    return {"incident_id": incident_id, "total": len(timeline), "timeline": timeline}
 
 
 @app.get("/api/v1/incidents/stats/summary", tags=["incidents"])

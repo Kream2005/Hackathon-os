@@ -322,12 +322,21 @@ async def health():
 
 @app.get("/health/ready", tags=["ops"])
 async def readiness():
-    """Deep readiness check — notification service is stateless, always ready."""
-    return {
-        "status": "ok",
-        "service": "notification-service",
-        "notifications_in_log": len(notification_log),
-    }
+    """Deep readiness check — verifies DB connectivity."""
+    try:
+        with engine.connect() as conn:
+            count = conn.execute(text("SELECT COUNT(*) FROM notifications")).scalar() or 0
+        return {
+            "status": "ok",
+            "service": "notification-service",
+            "notifications_in_db": count,
+        }
+    except Exception as exc:
+        logger.warning("Readiness check failed: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            content={"status": "degraded", "service": "notification-service", "detail": str(exc)},
+        )
 
 
 @app.get("/metrics", tags=["ops"])

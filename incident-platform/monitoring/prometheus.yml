@@ -27,9 +27,9 @@ scrape_configs:
     metrics_path: /metrics
     scrape_interval: 15s
 
-  - job_name: 'web-ui'
+  - job_name: 'api-gateway'
     static_configs:
-      - targets: ['web-ui:8080']
+      - targets: ['api-gateway:8080']
     metrics_path: /metrics
     scrape_interval: 15s
 

@@ -98,6 +98,7 @@ SERVICE_MAP: dict[str, str] = {
     "oncall": ONCALL_SERVICE_URL,
     "schedules": ONCALL_SERVICE_URL,
     "escalate": ONCALL_SERVICE_URL,
+    "escalations": ONCALL_SERVICE_URL,
     "notify": NOTIFICATION_SERVICE_URL,
     "notifications": NOTIFICATION_SERVICE_URL,
 }

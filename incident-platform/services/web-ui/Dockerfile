@@ -1,41 +1,51 @@
-# ---- Stage 1: Dependencies ----
-FROM node:20-alpine AS deps
-RUN apk add --no-cache libc6-compat
-RUN corepack enable && corepack prepare pnpm@latest --activate
-
-WORKDIR /app
-COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --frozen-lockfile
-
-# ---- Stage 2: Build ----
+# ---- Stage 1: Build ----
 FROM node:20-alpine AS builder
-RUN corepack enable && corepack prepare pnpm@latest --activate
 
 WORKDIR /app
-COPY --from=deps /app/node_modules ./node_modules
+COPY package.json ./
+RUN npm install
+
 COPY . .
 
-ENV NEXT_TELEMETRY_DISABLED=1
-RUN pnpm build
+ARG VITE_API_GATEWAY_URL=http://localhost:8080
+ENV VITE_API_GATEWAY_URL=$VITE_API_GATEWAY_URL
 
-# ---- Stage 3: Runtime ----
-FROM node:20-alpine AS runner
+RUN npm run build
 
-WORKDIR /app
-ENV NODE_ENV=production
-ENV NEXT_TELEMETRY_DISABLED=1
+# ---- Stage 2: Serve with nginx ----
+FROM nginx:alpine
 
-RUN addgroup --system --gid 1001 nodejs && \
-    adduser --system --uid 1001 nextjs
+# Copy nginx config for SPA routing
+RUN rm /etc/nginx/conf.d/default.conf
+COPY --from=builder /app/dist /usr/share/nginx/html
 
-COPY --from=builder /app/public ./public
-COPY --from=builder --chown=nextjs:nodejs /app/.next/standalone ./
-COPY --from=builder --chown=nextjs:nodejs /app/.next/static ./.next/static
+# nginx config: SPA fallback + reverse proxy to API Gateway
+RUN cat > /etc/nginx/conf.d/default.conf << 'EOF'
+server {
+    listen 3000;
+    root /usr/share/nginx/html;
+    index index.html;
 
-USER nextjs
+    # API proxy to gateway
+    location /api/ {
+        proxy_pass http://api-gateway:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+
+    # SPA fallback
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # Cache static assets
+    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+}
+EOF
 
 EXPOSE 3000
-ENV PORT=3000
-ENV HOSTNAME="0.0.0.0"
-
-CMD ["node", "server.js"]
+CMD ["nginx", "-g", "daemon off;"]
