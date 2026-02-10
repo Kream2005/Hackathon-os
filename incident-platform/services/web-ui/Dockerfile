@@ -15,43 +15,10 @@ RUN npm run build
 # ---- Stage 2: Serve with nginx ----
 FROM nginx:alpine
 
-# Copy nginx config for SPA routing
+# Copy nginx config and built assets
 RUN rm /etc/nginx/conf.d/default.conf
+COPY nginx.conf /etc/nginx/conf.d/default.conf
 COPY --from=builder /app/dist /usr/share/nginx/html
-
-# nginx config: SPA fallback + reverse proxy to API Gateway
-RUN cat > /etc/nginx/conf.d/default.conf << 'EOF'
-server {
-    listen 3000;
-    root /usr/share/nginx/html;
-    index index.html;
-
-    # Prometheus metrics endpoint (minimal — just proves nginx is alive)
-    location = /metrics {
-        default_type "text/plain; version=0.0.4; charset=utf-8";
-        return 200 "# HELP nginx_up Whether the nginx web-ui is up\n# TYPE nginx_up gauge\nnginx_up 1\n# HELP nginx_http_requests_total Placeholder request counter\n# TYPE nginx_http_requests_total counter\nnginx_http_requests_total 0\n";
-    }
-
-    # API proxy to gateway
-    location /api/ {
-        proxy_pass http://api-gateway:8080;
-        proxy_set_header Host $host;
-        proxy_set_header X-Real-IP $remote_addr;
-        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-    }
-
-    # SPA fallback
-    location / {
-        try_files $uri $uri/ /index.html;
-    }
-
-    # Cache static assets
-    location ~* \.(js|css|png|jpg|jpeg|gif|ico|svg|woff2?)$ {
-        expires 1y;
-        add_header Cache-Control "public, immutable";
-    }
-}
-EOF
 
 # Run as non-root user for security
 RUN chown -R nginx:nginx /usr/share/nginx/html && \
