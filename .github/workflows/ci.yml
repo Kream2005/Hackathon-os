@@ -288,7 +288,7 @@ jobs:
 
       - name: Test Incident Creation
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/incidents/ \
+          RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/incidents \
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
@@ -302,14 +302,14 @@ jobs:
 
       - name: Test Get Incidents
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/api/v1/incidents/ \
+          RESPONSE=$(curl -s http://localhost:8080/api/v1/incidents \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Get incidents: $RESPONSE"
           echo "✅ Get incidents works"
 
       - name: Test Alert Ingestion
         run: |
-          RESPONSE=$(curl -sf -X POST http://localhost:8080/api/v1/alerts/ \
+          RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/alerts \
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
@@ -330,8 +330,15 @@ jobs:
 
       - name: Test Notifications
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/api/v1/notifications/ \
-            -H "X-API-Key: hackathon-api-key-2026")
+          RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/notify \
+            -H "Content-Type: application/json" \
+            -H "X-API-Key: hackathon-api-key-2026" \
+            -d '{
+              "incident_id": "00000000-0000-0000-0000-000000000000",
+              "channel": "mock",
+              "message": "CI test notification",
+              "recipients": ["ci@test.com"]
+            }')
           echo "Notifications: $RESPONSE"
           echo "✅ Notification service works"
 
