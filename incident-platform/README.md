@@ -6,17 +6,21 @@ A production-ready incident management and on-call platform built with microserv
 
 ```
                     ┌──────────────┐
-                    │   Web UI     │ :8080
-                    │  (Nginx)     │
+                    │   Web UI     │ :3001
+                    │ (React+Nginx)│
                     └──────┬───────┘
-                           │ HTTP (browser → localhost)
+                           │ /api/* proxy
+                    ┌──────┴───────┐
+                    │ API Gateway  │ :8080
+                    │  (FastAPI)   │
+                    └──────┬───────┘
          ┌─────────────────┼─────────────────┐
          │                 │                  │
          ▼                 ▼                  ▼
 ┌─────────────────┐ ┌──────────────┐ ┌──────────────────┐
 │ Alert Ingestion │ │  Incident    │ │  On-Call &        │
 │   Service       │ │  Management  │ │  Escalation       │
-│   :8001         │─│  :8002       │─│  :8003            │
+│   :8001         │ │  :8002       │ │  :8003            │
 └────────┬────────┘ └──────┬───────┘ └──────────────────┘
          │                 │                  │
          │                 ▼                  │
@@ -46,7 +50,8 @@ A production-ready incident management and on-call platform built with microserv
 | Incident Management  | 8002 | Python FastAPI     | Incident lifecycle & MTTA/MTTR |
 | On-Call Service      | 8003 | Python FastAPI     | Schedules & escalation         |
 | Notification Service | 8004 | Python FastAPI     | Mock notification delivery     |
-| Web UI               | 8080 | HTML/JS + Nginx    | Dashboard & incident mgmt      |
+| API Gateway          | 8080 | Python FastAPI     | Auth, rate-limiting, proxy     |
+| Web UI               | 3001 | React + Vite + Nginx | Dashboard & incident mgmt    |
 | PostgreSQL           | 5432 | postgres:15-alpine | Persistent data store          |
 | Prometheus           | 9090 | prom/prometheus    | Metrics collection             |
 | Grafana              | 3000 | grafana/grafana    | Metrics dashboards             |
@@ -91,7 +96,8 @@ curl -X POST http://localhost:8001/api/v1/alerts \
 
 | Service        | URL                      | Credentials   |
 | -------------- | ------------------------ | ------------- |
-| **Web UI**     | http://localhost:8080     | -             |
+| **Web UI**     | http://localhost:3001     | admin / admin |
+| **API Gateway**| http://localhost:8080     | API key header|
 | **Grafana**    | http://localhost:3000     | admin / admin |
 | **Prometheus** | http://localhost:9090     | -             |
 
@@ -102,7 +108,7 @@ chmod +x run-pipeline.sh
 ./run-pipeline.sh
 ```
 
-**5 stages:** Code Quality → Security Scanning → Build Images → Deploy → Post-Deployment Verification
+**8 stages:** Code Quality → Security Scan → Tests & Coverage → Build Images → Image Vulnerability Scan → Deploy → Post-Deploy Verification → Integration Tests (E2E)
 
 ## API Documentation
 
@@ -208,6 +214,7 @@ Key tables in `database/init.sql`:
 
 1. **Live Incident Overview** — Open incidents, MTTA/MTTR gauges, alerts over time, top noisy services
 2. **SRE Performance Metrics** — MTTA/MTTR trends, incident volume, acknowledgment/resolution distributions
+3. **System Health Dashboard** — Service availability (up/down), request rates, scrape durations
 
 ## End-to-End Flow
 
@@ -240,8 +247,8 @@ cd services/incident-management && pip install -r requirements.txt && pytest -v 
 
 - **Backend**: Python 3.11, FastAPI, SQLAlchemy, Pydantic v2
 - **Database**: PostgreSQL 15 with pgcrypto
-- **Frontend**: HTML5, CSS3, Vanilla JavaScript
-- **Web Server**: Nginx (Alpine)
+- **Frontend**: React 18, Vite 6, TypeScript, Tailwind CSS, Recharts
+- **Web Server**: Nginx (Alpine) with reverse proxy
 - **Monitoring**: Prometheus + Grafana
 - **Orchestration**: Docker Compose
-- **CI/CD**: Shell script pipeline (5 stages)
+- **CI/CD**: Shell script pipeline (8 stages)

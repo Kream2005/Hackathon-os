@@ -24,6 +24,11 @@ services:
     build: ./services/alert-ingestion
     ports:
       - "8001:8001"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.50'
     environment:
       DATABASE_URL: ${DATABASE_URL}
       INCIDENT_MANAGEMENT_URL: http://incident-management:8002
@@ -46,6 +51,11 @@ services:
     build: ./services/incident-management
     ports:
       - "8002:8002"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.50'
     environment:
       DATABASE_URL: ${DATABASE_URL}
       ONCALL_SERVICE_URL: http://oncall-service:8003
@@ -64,11 +74,16 @@ services:
       retries: 3
 
 
-  # ---- ON-CALL SERVICE (Person 2) ----
+  # ---- ON-CALL SERVICE ----
   oncall-service:
     build: ./services/oncall-service
     ports:
       - "8003:8003"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.50'
     environment:
       DATABASE_URL: ${DATABASE_URL}
     depends_on:
@@ -89,6 +104,11 @@ services:
     build: ./services/notification-service
     ports:
       - "8004:8004"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.50'
     environment:
       DATABASE_URL: ${DATABASE_URL}
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
@@ -110,6 +130,11 @@ services:
     build: ./services/api-gateway
     ports:
       - "8080:8080"
+    deploy:
+      resources:
+        limits:
+          memory: 256M
+          cpus: '0.50'
     environment:
       ALERT_INGESTION_URL: http://alert-ingestion:8001
       INCIDENT_MANAGEMENT_URL: http://incident-management:8002
@@ -137,6 +162,11 @@ services:
     build: ./services/web-ui
     ports:
       - "3001:3000"
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
     depends_on:
       - api-gateway
     networks:
