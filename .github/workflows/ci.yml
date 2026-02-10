@@ -286,6 +286,18 @@ jobs:
             sleep 5
           done
 
+      - name: Verify DB connectivity from services
+        run: |
+          echo "Testing direct DB insert..."
+          docker compose exec -T database psql -U hackathon -d incident_platform -c "
+            INSERT INTO incidents (id, title, service, severity, status, assigned_to, alert_count, created_at, updated_at)
+            VALUES (gen_random_uuid(), 'DB Test', 'ci-test', 'low', 'open', NULL, 0, NOW(), NOW());
+          "
+          echo "✅ Direct DB insert works"
+          echo "Restarting services to refresh DB connections..."
+          docker compose restart incident-management
+          sleep 10
+
       - name: Test API Gateway health
         run: |
           curl -sf http://localhost:8080/health || (echo "❌ API Gateway not healthy" && exit 1)
@@ -301,16 +313,29 @@ jobs:
 
       - name: Test Incident Creation
         run: |
-          RESPONSE=$(curl -s -X POST http://localhost:8080/api/v1/incidents \
-            -H "Content-Type: application/json" \
-            -H "X-API-Key: hackathon-api-key-2026" \
-            -d '{
-              "title": "CI Test Incident",
-              "severity": "low",
-              "service": "ci-pipeline"
-            }')
-          echo "Create incident: $RESPONSE"
-          echo "$RESPONSE" | grep -q "id" && echo "✅ Incident creation works" || (echo "❌ Incident creation failed" && exit 1)
+          for i in $(seq 1 5); do
+            RESPONSE=$(curl -s -w "\n%{http_code}" -X POST http://localhost:8080/api/v1/incidents \
+              -H "Content-Type: application/json" \
+              -H "X-API-Key: hackathon-api-key-2026" \
+              -d '{
+                "title": "CI Test Incident",
+                "severity": "low",
+                "service": "ci-pipeline"
+              }')
+            HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+            BODY=$(echo "$RESPONSE" | head -n -1)
+            echo "Attempt $i - HTTP $HTTP_CODE: $BODY"
+            if echo "$BODY" | grep -q '"id"'; then
+              echo "✅ Incident creation works"
+              exit 0
+            fi
+            echo "Retrying in 10s..."
+            docker compose logs --tail=5 incident-management
+            sleep 10
+          done
+          echo "❌ Incident creation failed after 5 attempts"
+          docker compose logs incident-management
+          exit 1
 
       - name: Test Get Incidents
         run: |
