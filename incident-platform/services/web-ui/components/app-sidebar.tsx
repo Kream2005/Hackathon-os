@@ -6,6 +6,7 @@ import { usePathname } from "next/navigation"
 import { useTheme } from "next-themes"
 import { cn } from "@/lib/utils"
 import { getServicesHealth } from "@/lib/api-client"
+import { useAuth } from "@/components/auth-provider"
 import type { ServiceHealth } from "@/lib/types"
 import {
   AlertTriangle,
@@ -17,6 +18,8 @@ import {
   Sun,
   Moon,
   Zap,
+  LogOut,
+  User,
 } from "lucide-react"
 
 const navItems = [
@@ -38,6 +41,7 @@ const SERVICE_MAP: Record<string, { name: string; port: number }> = {
 export function AppSidebar() {
   const pathname = usePathname()
   const { theme, setTheme } = useTheme()
+  const { username, logout } = useAuth()
   const [health, setHealth] = useState<ServiceHealth | null>(null)
 
   useEffect(() => {
@@ -105,6 +109,21 @@ export function AppSidebar() {
           <Moon className="absolute h-4 w-4 rotate-90 scale-0 transition-transform dark:rotate-0 dark:scale-100" />
           <span className="ml-4">Toggle theme</span>
         </button>
+      </div>
+
+      {/* User / Logout */}
+      <div className="border-t border-border px-4 py-3">
+        <div className="flex items-center gap-3 rounded-lg px-3 py-2 text-sm">
+          <User className="h-4 w-4 text-muted-foreground" />
+          <span className="flex-1 truncate font-medium text-foreground">{username ?? "user"}</span>
+          <button
+            onClick={logout}
+            title="Sign out"
+            className="rounded-md p-1 text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive"
+          >
+            <LogOut className="h-4 w-4" />
+          </button>
+        </div>
       </div>
 
       {/* Service Status */}

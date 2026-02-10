@@ -4,6 +4,7 @@ import { Inter, JetBrains_Mono } from "next/font/google"
 import "./globals.css"
 import { AppSidebar } from "@/components/app-sidebar"
 import { ThemeProvider } from "@/components/theme-provider"
+import { AuthProvider } from "@/components/auth-provider"
 
 const _inter = Inter({ subsets: ["latin"], variable: "--font-inter" })
 const _jetbrainsMono = JetBrains_Mono({ subsets: ["latin"], variable: "--font-jetbrains" })
@@ -35,10 +36,12 @@ export default function RootLayout({
           enableSystem
           disableTransitionOnChange
         >
-          <div className="flex min-h-screen">
-            <AppSidebar />
-            <main className="flex-1 overflow-auto">{children}</main>
-          </div>
+          <AuthProvider>
+            <div className="flex min-h-screen">
+              <AppSidebar />
+              <main className="flex-1 overflow-auto">{children}</main>
+            </div>
+          </AuthProvider>
         </ThemeProvider>
       </body>
     </html>

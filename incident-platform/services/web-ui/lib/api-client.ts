@@ -29,14 +29,27 @@ const GATEWAY_URL =
     ? (process.env.NEXT_PUBLIC_API_GATEWAY_URL ?? "http://localhost:8080")
     : (process.env.API_GATEWAY_URL ?? "http://api-gateway:8080")
 
+/** Resolve the API key: browser reads from localStorage, server from env. */
+function getApiKey(): string {
+  if (typeof window !== "undefined") {
+    return localStorage.getItem("api_key") ?? ""
+  }
+  return process.env.NEXT_PUBLIC_API_KEY ?? ""
+}
+
 export async function apiFetch<T>(
   path: string,
   options?: RequestInit,
 ): Promise<T> {
+  const apiKey = getApiKey()
+  const authHeaders: Record<string, string> = apiKey
+    ? { "X-API-Key": apiKey }
+    : {}
   const res = await fetch(`${GATEWAY_URL}${path}`, {
     ...options,
     headers: {
       "Content-Type": "application/json",
+      ...authHeaders,
       ...(options?.headers ?? {}),
     },
   })
@@ -198,4 +211,22 @@ export async function sendNotification(
 
 export async function getServicesHealth(): Promise<ServiceHealth> {
   return apiFetch<ServiceHealth>("/api/services/health")
+}
+
+// ── Auth helpers ──────────────────────────────────────────────────────────
+
+export async function login(
+  username: string,
+  password: string,
+): Promise<{ api_key: string; username: string; message: string }> {
+  const res = await fetch(`${GATEWAY_URL}/api/v1/auth/login`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ username, password }),
+  })
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({ detail: res.statusText }))
+    throw new Error(body.detail ?? `Login failed (${res.status})`)
+  }
+  return res.json()
 }

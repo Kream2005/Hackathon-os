@@ -115,6 +115,9 @@ services:
       INCIDENT_MANAGEMENT_URL: http://incident-management:8002
       ONCALL_SERVICE_URL: http://oncall-service:8003
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
+      API_KEYS: ${API_KEYS:-}
+      AUTH_USERS: ${AUTH_USERS:-admin:admin,operator:operator}
+      LOGIN_API_KEY: ${LOGIN_API_KEY:-}
     depends_on:
       - notification-service
     networks:
@@ -135,6 +138,7 @@ services:
     environment:
       API_GATEWAY_URL: http://api-gateway:8080
       NEXT_PUBLIC_API_GATEWAY_URL: http://localhost:8080
+      NEXT_PUBLIC_API_KEY: ${API_KEY:-}
     depends_on:
       - api-gateway
     networks:

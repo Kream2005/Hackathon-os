@@ -25,6 +25,29 @@ INCIDENT_MANAGEMENT_URL = os.getenv("INCIDENT_MANAGEMENT_URL", "http://incident-
 ONCALL_SERVICE_URL = os.getenv("ONCALL_SERVICE_URL", "http://oncall-service:8003")
 NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
 
+# ---------------------------------------------------------------------------
+# API Key Authentication
+# ---------------------------------------------------------------------------
+_raw_keys = os.getenv("API_KEYS", "")
+API_KEYS: set[str] = {k.strip() for k in _raw_keys.split(",") if k.strip()}
+AUTH_ENABLED = len(API_KEYS) > 0
+
+# User credentials for the login page (username:password pairs)
+# Format: "admin:admin123,operator:op456"
+_raw_users = os.getenv("AUTH_USERS", "admin:admin,operator:operator")
+USER_CREDENTIALS: dict[str, str] = {}
+for pair in _raw_users.split(","):
+    pair = pair.strip()
+    if ":" in pair:
+        u, p = pair.split(":", 1)
+        USER_CREDENTIALS[u.strip()] = p.strip()
+
+# The API key returned on successful login
+LOGIN_API_KEY = os.getenv("LOGIN_API_KEY", list(API_KEYS)[0] if API_KEYS else "default-key")
+
+# Paths that bypass authentication (monitoring / health probes / login)
+AUTH_BYPASS_PATHS: set[str] = {"/health", "/metrics", "/api/services/health", "/api/v1/auth/login"}
+
 SERVICE_MAP: dict[str, str] = {
     "alerts": ALERT_INGESTION_URL,
     "incidents": INCIDENT_MANAGEMENT_URL,
@@ -79,6 +102,36 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+# ---------------------------------------------------------------------------
+# API Key Authentication Middleware
+# ---------------------------------------------------------------------------
+@app.middleware("http")
+async def api_key_auth(request: Request, call_next):
+    """Enforce API key on all routes except health/metrics."""
+    # Always allow preflight CORS requests, health probes, and login
+    if (
+        not AUTH_ENABLED
+        or request.method == "OPTIONS"
+        or request.url.path in AUTH_BYPASS_PATHS
+    ):
+        return await call_next(request)
+
+    api_key = request.headers.get("X-API-Key")
+    if not api_key:
+        return Response(
+            content='{"detail":"Missing API key. Provide X-API-Key header."}',
+            status_code=401,
+            media_type="application/json",
+        )
+    if api_key not in API_KEYS:
+        return Response(
+            content='{"detail":"Invalid API key."}',
+            status_code=403,
+            media_type="application/json",
+        )
+    return await call_next(request)
 
 
 # ---------------------------------------------------------------------------
@@ -152,6 +205,34 @@ async def _proxy(request: Request, service_label: str, base_url: str, downstream
     except httpx.RequestError as exc:
         GATEWAY_REQUESTS.labels(method=request.method, service=service_label, status=502).inc()
         raise HTTPException(status_code=502, detail=f"Upstream service unreachable: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoint — login
+# ---------------------------------------------------------------------------
+@app.post("/api/v1/auth/login")
+async def login(request: Request):
+    """Validate username/password and return an API key."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON body")
+
+    username = body.get("username", "").strip()
+    password = body.get("password", "")
+
+    if not username or not password:
+        raise HTTPException(status_code=400, detail="Username and password required")
+
+    expected = USER_CREDENTIALS.get(username)
+    if expected is None or expected != password:
+        raise HTTPException(status_code=401, detail="Invalid username or password")
+
+    return {
+        "api_key": LOGIN_API_KEY,
+        "username": username,
+        "message": "Login successful",
+    }
 
 
 # ---------------------------------------------------------------------------
