@@ -242,6 +242,9 @@ jobs:
           POSTGRES_PASSWORD=hackathon2026
           POSTGRES_DB=incident_platform
           DATABASE_URL=postgresql://hackathon:hackathon2026@database:5432/incident_platform
+          ALERT_DB_URL=postgresql://hackathon:hackathon2026@database:5432/alert_db
+          INCIDENT_DB_URL=postgresql://hackathon:hackathon2026@database:5432/incident_db
+          NOTIFICATION_DB_URL=postgresql://hackathon:hackathon2026@database:5432/notification_db
           ALERT_INGESTION_PORT=8001
           INCIDENT_MANAGEMENT_PORT=8002
           ONCALL_SERVICE_PORT=8003
@@ -275,12 +278,20 @@ jobs:
 
       - name: Verify database tables are ready
         run: |
-          for i in $(seq 1 10); do
-            TABLES=$(docker compose exec -T database psql -U hackathon -d incident_platform -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
-            echo "Attempt $i: $TABLES tables found"
-            if [ "$TABLES" -ge 4 ] 2>/dev/null; then
-              echo "✅ Database tables ready!"
-              docker compose exec -T database psql -U hackathon -d incident_platform -c "\dt"
+          for i in $(seq 1 15); do
+            echo "--- Attempt $i ---"
+            ALERT_TABLES=$(docker compose exec -T database psql -U hackathon -d alert_db -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+            INCIDENT_TABLES=$(docker compose exec -T database psql -U hackathon -d incident_db -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+            NOTIF_TABLES=$(docker compose exec -T database psql -U hackathon -d notification_db -t -c "SELECT count(*) FROM information_schema.tables WHERE table_schema='public';" 2>/dev/null | tr -d ' ')
+            echo "alert_db: ${ALERT_TABLES:-0} tables, incident_db: ${INCIDENT_TABLES:-0} tables, notification_db: ${NOTIF_TABLES:-0} tables"
+            if [ "${ALERT_TABLES:-0}" -ge 1 ] 2>/dev/null && [ "${INCIDENT_TABLES:-0}" -ge 3 ] 2>/dev/null && [ "${NOTIF_TABLES:-0}" -ge 1 ] 2>/dev/null; then
+              echo "✅ All per-service databases ready!"
+              echo "--- alert_db ---"
+              docker compose exec -T database psql -U hackathon -d alert_db -c "\dt"
+              echo "--- incident_db ---"
+              docker compose exec -T database psql -U hackathon -d incident_db -c "\dt"
+              echo "--- notification_db ---"
+              docker compose exec -T database psql -U hackathon -d notification_db -c "\dt"
               break
             fi
             sleep 5
@@ -288,15 +299,15 @@ jobs:
 
       - name: Verify DB connectivity from services
         run: |
-          echo "Testing direct DB insert..."
-          docker compose exec -T database psql -U hackathon -d incident_platform -c "
+          echo "Testing direct DB insert into incident_db..."
+          docker compose exec -T database psql -U hackathon -d incident_db -c "
             INSERT INTO incidents (id, title, service, severity, status, assigned_to, alert_count, created_at, updated_at)
             VALUES (gen_random_uuid(), 'DB Test', 'ci-test', 'low', 'open', NULL, 0, NOW(), NOW());
           "
           echo "✅ Direct DB insert works"
           echo "Restarting services to refresh DB connections..."
-          docker compose restart incident-management
-          sleep 10
+          docker compose restart alert-ingestion incident-management notification-service
+          sleep 15
 
       - name: Test API Gateway health
         run: |
