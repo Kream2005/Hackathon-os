@@ -1,0 +1,24 @@
+# Critical backend alert
+curl -s -X POST http://localhost:8001/api/v1/alerts \
+  -H "Content-Type: application/json" \
+  -d '{"service":"backend-api","severity":"critical","message":"Database connection pool exhausted - 0 available connections","source":"prometheus"}' | python3 -m json.tool
+
+# High severity frontend alert
+curl -s -X POST http://localhost:8001/api/v1/alerts \
+  -H "Content-Type: application/json" \
+  -d '{"service":"frontend","severity":"high","message":"HTTP 5xx error rate exceeds 15% threshold","source":"grafana"}' | python3 -m json.tool
+
+# Medium infra alert
+curl -s -X POST http://localhost:8001/api/v1/alerts \
+  -H "Content-Type: application/json" \
+  -d '{"service":"payment-service","severity":"medium","message":"Memory usage at 89% on pod payment-service-7d4f","source":"prometheus"}' | python3 -m json.tool
+
+
+
+
+2. Duplicate alert (tests correlation — same service+severity within 5min)
+curl -s -X POST http://localhost:8001/api/v1/alerts \
+  -H "Content-Type: application/json" \
+  -d '{"service":"backend-api","severity":"critical","message":"Database connection timeout after 30s","source":"prometheus"}' | python3 -m json.tool
+# → should return action: "existing_incident"
+

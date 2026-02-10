@@ -1,23 +1,72 @@
 services:
-  # ---- DATABASE ----
-  database:
+  # ---- ALERT DATABASE (dedicated Postgres for alert-ingestion) ----
+  alert-db:
     image: postgres:15-alpine
     environment:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_DB: alert_db
     volumes:
-      - db-data:/var/lib/postgresql/data
-      - ./database/init.sh:/docker-entrypoint-initdb.d/init.sh
-    ports:
-      - "5432:5432"
+      - alert-db-data:/var/lib/postgresql/data
+      - ./database/alert-db/init.sql:/docker-entrypoint-initdb.d/init.sql
     networks:
       - incident-platform
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d alert_db"]
       interval: 10s
       timeout: 5s
       retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+
+  # ---- INCIDENT DATABASE (dedicated Postgres for incident-management) ----
+  incident-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: incident_db
+    volumes:
+      - incident-db-data:/var/lib/postgresql/data
+      - ./database/incident-db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d incident_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
+
+  # ---- NOTIFICATION DATABASE (dedicated Postgres for notification-service) ----
+  notification-db:
+    image: postgres:15-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: notification_db
+    volumes:
+      - notification-db-data:/var/lib/postgresql/data
+      - ./database/notification-db/init.sql:/docker-entrypoint-initdb.d/init.sql
+    networks:
+      - incident-platform
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d notification_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+          cpus: '0.25'
 
   # ---- ALERT INGESTION SERVICE ----
   alert-ingestion:
@@ -30,11 +79,11 @@ services:
           memory: 256M
           cpus: '0.50'
     environment:
-      DATABASE_URL: ${ALERT_DB_URL}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@alert-db:5432/alert_db
       INCIDENT_MANAGEMENT_URL: http://incident-management:8002
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
     depends_on:
-      database:
+      alert-db:
         condition: service_healthy
     networks:
       - incident-platform
@@ -57,12 +106,12 @@ services:
           memory: 256M
           cpus: '0.50'
     environment:
-      DATABASE_URL: ${INCIDENT_DB_URL}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@incident-db:5432/incident_db
       ONCALL_SERVICE_URL: http://oncall-service:8003
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
       ALERT_INGESTION_URL: http://alert-ingestion:8001
     depends_on:
-      database:
+      incident-db:
         condition: service_healthy
     networks:
       - incident-platform
@@ -85,9 +134,6 @@ services:
         limits:
           memory: 256M
           cpus: '0.50'
-    depends_on:
-      database:
-        condition: service_healthy
     networks:
       - incident-platform
     restart: unless-stopped
@@ -109,10 +155,10 @@ services:
           memory: 256M
           cpus: '0.50'
     environment:
-      DATABASE_URL: ${NOTIFICATION_DB_URL}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@notification-db:5432/notification_db
       NOTIFICATION_SERVICE_URL: http://notification-service:8004
     depends_on:
-      database:
+      notification-db:
         condition: service_healthy
     networks:
       - incident-platform
@@ -227,7 +273,9 @@ services:
       retries: 3
 
 volumes:
-  db-data:
+  alert-db-data:
+  incident-db-data:
+  notification-db-data:
   prometheus-data:
   grafana-data:
 

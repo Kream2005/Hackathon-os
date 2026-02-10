@@ -35,7 +35,7 @@ from sqlalchemy.exc import SQLAlchemyError
 # ── Configuration ──────────────────────────────────────────────────────────
 DATABASE_URL = os.getenv(
     "DATABASE_URL",
-    "postgresql://hackathon:hackathon2026@database:5432/incident_db",
+    "postgresql://hackathon:hackathon2026@incident-db:5432/incident_db",
 )
 ONCALL_SERVICE_URL = os.getenv("ONCALL_SERVICE_URL", "http://oncall-service:8003")
 NOTIFICATION_SERVICE_URL = os.getenv("NOTIFICATION_SERVICE_URL", "http://notification-service:8004")
