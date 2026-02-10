@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo } from 'react'
-import { fetchIncidents, fetchIncidentSummary, createIncident } from '../api-client'
+import { fetchIncidents, fetchIncidentSummary, createIncident, fetchSchedules } from '../api-client'
 import type { Incident, IncidentSummaryStats } from '../types'
 import IncidentsTable from '../components/IncidentsTable'
 import { AlertTriangle, Clock, CheckCircle2, Timer, Loader2, Plus, Send, X } from 'lucide-react'
@@ -19,6 +19,7 @@ export default function Dashboard() {
   const [createOpen, setCreateOpen] = useState(false)
   const [creating, setCreating] = useState(false)
   const [form, setForm] = useState({ title: '', service: '', severity: 'medium', assigned_to: '' })
+  const [teams, setTeams] = useState<string[]>([])
 
   async function load() {
     try {
@@ -33,7 +34,11 @@ export default function Dashboard() {
     }
   }
 
-  useEffect(() => { load(); const id = setInterval(load, 10000); return () => clearInterval(id) }, [])
+  useEffect(() => {
+    load()
+    fetchSchedules().then(s => setTeams(s.map(x => x.team))).catch(() => {})
+    const id = setInterval(load, 10000); return () => clearInterval(id)
+  }, [])
 
   const openCount = summary?.open ?? incidents.filter(i => i.status === 'open').length
   const ackedCount = summary?.acknowledged ?? incidents.filter(i => i.status === 'acknowledged').length
@@ -144,8 +149,11 @@ export default function Dashboard() {
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Service</label>
-                <input placeholder="e.g. frontend-api" value={form.service} onChange={e => setForm({...form, service: e.target.value})}
-                  className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+                <select value={form.service} onChange={e => setForm({...form, service: e.target.value})}
+                  className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
+                  <option value="">Select a service…</option>
+                  {teams.map(t => <option key={t} value={t}>{t}</option>)}
+                </select>
               </div>
               <div>
                 <label className="text-sm font-medium text-foreground">Severity</label>
@@ -158,8 +166,9 @@ export default function Dashboard() {
                 </select>
               </div>
               <div>
-                <label className="text-sm font-medium text-foreground">Assigned To (optional)</label>
-                <input placeholder="e.g. alice@example.com" value={form.assigned_to} onChange={e => setForm({...form, assigned_to: e.target.value})}
+                <label className="text-sm font-medium text-foreground">Assigned To</label>
+                <p className="text-xs text-muted-foreground mt-0.5">Leave empty to auto-assign from on-call rotation</p>
+                <input placeholder="Auto-assigned from on-call schedule" value={form.assigned_to} onChange={e => setForm({...form, assigned_to: e.target.value})}
                   className="mt-1 flex h-10 w-full rounded-md border border-border bg-background px-3 py-2 text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
               </div>
             </div>

@@ -2,9 +2,9 @@ import { useState, useEffect } from 'react'
 import {
   fetchSchedules, createSchedule, deleteSchedule,
   fetchCurrentOnCall, setOverride, removeOverride,
-  triggerEscalation, fetchEscalations,
+  triggerEscalation, fetchEscalations, fetchIncidents,
 } from '../api-client'
-import type { OnCallSchedule, CurrentOnCall, EscalationLog } from '../types'
+import type { OnCallSchedule, CurrentOnCall, EscalationLog, Incident } from '../types'
 import { Phone, User, Users, Calendar, Shield, Loader2, Plus, Trash2, UserCog, AlertTriangle, X } from 'lucide-react'
 
 function timeAgo(d: string) {
@@ -99,6 +99,7 @@ function CurrentOnCallCard({ team, onRefresh }: { team: string; onRefresh: () =>
   const [form, setForm] = useState({ name: '', email: '', reason: '' })
   const [escForm, setEscForm] = useState({ incident_id: '', reason: '' })
   const [submitting, setSubmitting] = useState(false)
+  const [openIncidents, setOpenIncidents] = useState<Incident[]>([])
 
   async function load() {
     try { setCurrent(await fetchCurrentOnCall(team)) } catch { /* ignore */ }
@@ -106,6 +107,9 @@ function CurrentOnCallCard({ team, onRefresh }: { team: string; onRefresh: () =>
   }
 
   useEffect(() => { load() }, [team])
+  useEffect(() => {
+    fetchIncidents().then(inc => setOpenIncidents(inc.filter(i => i.status !== 'resolved'))).catch(() => {})
+  }, [escalateOpen])
 
   async function handleOverride() {
     if (!form.name.trim() || !form.email.trim()) return
@@ -199,8 +203,11 @@ function CurrentOnCallCard({ team, onRefresh }: { team: string; onRefresh: () =>
             <h3 className="mb-3 text-lg font-semibold text-foreground">Trigger Escalation</h3>
             <p className="mb-4 text-sm text-muted-foreground">Escalate an incident to the next responder on {team}.</p>
             <div className="flex flex-col gap-3">
-              <input placeholder="Incident ID" value={escForm.incident_id} onChange={e => setEscForm({...escForm, incident_id: e.target.value})}
-                className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
+              <select value={escForm.incident_id} onChange={e => setEscForm({...escForm, incident_id: e.target.value})}
+                className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary">
+                <option value="">Select an incident…</option>
+                {openIncidents.map(i => <option key={i.id} value={i.id}>[{i.severity.toUpperCase()}] {i.title.substring(0, 50)}</option>)}
+              </select>
               <input placeholder="Reason (optional)" value={escForm.reason} onChange={e => setEscForm({...escForm, reason: e.target.value})}
                 className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-2 focus:ring-primary" />
             </div>
