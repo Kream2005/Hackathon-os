@@ -382,10 +382,11 @@ jobs:
             -H "Content-Type: application/json" \
             -H "X-API-Key: hackathon-api-key-2026" \
             -d '{
+              "type": "incident",
               "incident_id": "00000000-0000-0000-0000-000000000000",
-              "channel": "mock",
               "message": "CI test notification",
-              "recipients": ["ci@test.com"]
+              "recipient": "ci@test.com",
+              "severity": "high"
             }')
           echo "Notifications: $RESPONSE"
           echo "✅ Notification service works"
