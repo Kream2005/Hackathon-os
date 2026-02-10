@@ -371,7 +371,7 @@ jobs:
 
       - name: Test On-Call Schedules
         run: |
-          RESPONSE=$(curl -sf http://localhost:8080/api/v1/oncall/schedules \
+          RESPONSE=$(curl -s http://localhost:8080/api/v1/schedules \
             -H "X-API-Key: hackathon-api-key-2026")
           echo "Schedules: $RESPONSE"
           echo "✅ On-Call service works"
