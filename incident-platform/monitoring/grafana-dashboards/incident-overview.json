@@ -38,7 +38,7 @@
       },
       "targets": [
         {
-          "expr": "incidents_open_current",
+          "expr": "incidents_total{status=\"open\"}",
           "legendFormat": "Open Incidents",
           "refId": "A"
         }
@@ -179,7 +179,7 @@
       "targets": [
         {
           "expr": "rate(alerts_received_total[5m])",
-          "legendFormat": "{{service}} ({{severity}})",
+          "legendFormat": "{{severity}}",
           "refId": "A"
         }
       ]
@@ -212,7 +212,7 @@
       },
       "targets": [
         {
-          "expr": "sum by (severity) (incidents_total)",
+          "expr": "sum by (severity) (incidents_created_total)",
           "legendFormat": "{{severity}}",
           "refId": "A"
         }
@@ -267,12 +267,12 @@
       },
       "targets": [
         {
-          "expr": "rate(alerts_requests_total[5m])",
+          "expr": "sum(rate(alerts_received_total[5m]))",
           "legendFormat": "Alert Ingestion",
           "refId": "A"
         },
         {
-          "expr": "rate(incidents_requests_total[5m])",
+          "expr": "sum(rate(incidents_created_total[5m]))",
           "legendFormat": "Incident Mgmt",
           "refId": "B"
         },

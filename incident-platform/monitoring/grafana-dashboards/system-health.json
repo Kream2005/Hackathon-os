@@ -37,7 +37,7 @@
         }
       },
       "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 2,
@@ -67,7 +67,7 @@
         }
       },
       "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 3,
@@ -97,7 +97,7 @@
         }
       },
       "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 4,
@@ -127,7 +127,7 @@
         }
       },
       "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 5,
@@ -157,7 +157,7 @@
         }
       },
       "options": { "colorMode": "background", "graphMode": "none", "textMode": "auto", "reduceOptions": { "calcs": ["lastNotNull"] } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 6,
@@ -189,7 +189,7 @@
         }
       },
       "options": { "reduceOptions": { "calcs": ["lastNotNull"] }, "showThresholdLabels": false, "showThresholdMarkers": true },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 7,
@@ -226,7 +226,7 @@
         }
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 8,
@@ -252,7 +252,7 @@
         }
       },
       "options": { "legend": { "displayMode": "table", "placement": "bottom" }, "tooltip": { "mode": "multi" } },
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     },
     {
       "id": 9,
@@ -283,7 +283,7 @@
       "transformations": [
         { "id": "organize", "options": { "excludeByName": { "Time": true, "__name__": true }, "renameByName": { "instance": "Endpoint", "job": "Service", "Value": "Status" } } }
       ],
-      "datasource": { "type": "prometheus", "uid": "prometheus" }
+      "datasource": { "type": "prometheus", "uid": "PBFA97CFB590B2093" }
     }
   ],
   "templating": { "list": [] },
