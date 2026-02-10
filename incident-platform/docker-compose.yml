@@ -118,6 +118,8 @@ services:
       API_KEYS: ${API_KEYS:-}
       AUTH_USERS: ${AUTH_USERS:-admin:admin,operator:operator}
       LOGIN_API_KEY: ${LOGIN_API_KEY:-}
+      RATE_LIMIT_RPM: ${RATE_LIMIT_RPM:-120}
+      RETRY_MAX_ATTEMPTS: ${RETRY_MAX_ATTEMPTS:-2}
     depends_on:
       - notification-service
     networks:

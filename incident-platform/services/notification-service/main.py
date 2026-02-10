@@ -31,8 +31,11 @@ from prometheus_client import (
     generate_latest,
     CONTENT_TYPE_LATEST,
 )
+from sqlalchemy import create_engine, text
+from sqlalchemy.exc import SQLAlchemyError
 
 # ── Configuration ──────────────────────────────────────────────────────────
+DATABASE_URL = os.getenv("DATABASE_URL", "postgresql://hackathon:hackathon2026@database:5432/incident_platform")
 WEBHOOK_URL = os.getenv("WEBHOOK_URL", "")
 LOG_LEVEL = os.getenv("LOG_LEVEL", "INFO").upper()
 MAX_LOG_SIZE = int(os.getenv("MAX_LOG_SIZE", "10000"))
@@ -81,9 +84,14 @@ notifications_in_log = Gauge(
 # ── Valid channels ────────────────────────────────────────────────────────
 VALID_CHANNELS = ("mock", "webhook", "email", "slack")
 
-# ── In-memory notification log ────────────────────────────────────────────
-notification_log: List[Dict[str, Any]] = []
-notification_index: Dict[str, Dict[str, Any]] = {}  # id → entry (O(1) lookup)
+# ── Database ──────────────────────────────────────────────────────────────
+engine = create_engine(
+    DATABASE_URL,
+    pool_pre_ping=True,
+    pool_size=10,
+    max_overflow=5,
+    pool_recycle=300,
+)
 
 
 # ── Pydantic Models ───────────────────────────────────────────────────────
@@ -220,23 +228,47 @@ CHANNEL_HANDLERS = {
 
 # ── Helpers ───────────────────────────────────────────────────────────────
 def _store_notification(entry: Dict[str, Any]) -> None:
-    """Append to in-memory log with bounded size (ring buffer behaviour)."""
-    notification_log.append(entry)
-    notification_index[entry["id"]] = entry
-    # Evict oldest entries if we exceed the limit
-    while len(notification_log) > MAX_LOG_SIZE:
-        evicted = notification_log.pop(0)
-        notification_index.pop(evicted["id"], None)
-    notifications_in_log.set(len(notification_log))
+    """Persist notification to PostgreSQL."""
+    try:
+        with engine.begin() as conn:
+            conn.execute(
+                text("""
+                    INSERT INTO notifications
+                        (id, incident_id, channel, recipient, message, severity, status, metadata, created_at)
+                    VALUES
+                        (:id, :incident_id, :channel, :recipient, :message, :severity, :status, :metadata, :created_at)
+                """),
+                {
+                    "id": entry["id"],
+                    "incident_id": entry["incident_id"],
+                    "channel": entry["channel"],
+                    "recipient": entry["recipient"],
+                    "message": entry["message"],
+                    "severity": entry.get("severity"),
+                    "status": entry["status"],
+                    "metadata": json.dumps(entry.get("metadata") or {}),
+                    "created_at": entry["created_at"],
+                },
+            )
+        notifications_in_log.inc()
+    except SQLAlchemyError as exc:
+        logger.error("Failed to persist notification %s: %s", entry["id"], exc)
 
 
 # ── Lifespan ──────────────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(application: FastAPI):
-    """Log startup and cleanup on shutdown."""
-    logger.info("Notification service starting — mock delivery enabled")
+    """Seed Prometheus gauge from DB and clean up on shutdown."""
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(text("SELECT COUNT(*) FROM notifications")).scalar()
+            notifications_in_log.set(row or 0)
+            logger.info("Notification service started — %d notifications in DB", row or 0)
+    except Exception as exc:
+        logger.warning("Could not seed notification count from DB: %s", exc)
     yield
-    logger.info("Notification service shutting down — %d notifications in log", len(notification_log))
+    engine.dispose()
+    logger.info("Notification service shut down — connection pool disposed")
 
 
 # ── FastAPI App ───────────────────────────────────────────────────────────
@@ -378,10 +410,25 @@ async def get_notification(notification_id: str):
     except ValueError:
         raise HTTPException(status_code=400, detail="Invalid notification ID format")
 
-    entry = notification_index.get(notification_id)
-    if not entry:
+    with engine.connect() as conn:
+        row = conn.execute(
+            text("SELECT id, incident_id, channel, recipient, message, severity, status, metadata, created_at FROM notifications WHERE id = :id"),
+            {"id": notification_id},
+        ).mappings().first()
+
+    if not row:
         raise HTTPException(status_code=404, detail="Notification not found")
-    return NotificationDetail(**entry)
+    return NotificationDetail(
+        id=str(row["id"]),
+        incident_id=row["incident_id"],
+        channel=row["channel"],
+        recipient=row["recipient"],
+        message=row["message"],
+        severity=row["severity"],
+        status=row["status"],
+        metadata=row["metadata"],
+        created_at=row["created_at"].isoformat() if hasattr(row["created_at"], "isoformat") else str(row["created_at"]),
+    )
 
 
 @app.get(
@@ -399,27 +446,60 @@ async def list_notifications(
     per_page: int = Query(default=50, ge=1, le=200),
 ):
     """Return notifications with optional filtering and pagination."""
-    filtered = notification_log
+    conditions: list[str] = []
+    params: Dict[str, Any] = {}
 
     if channel:
-        filtered = [n for n in filtered if n["channel"] == channel.lower()]
+        conditions.append("channel = :channel")
+        params["channel"] = channel.lower()
     if status:
-        filtered = [n for n in filtered if n["status"] == status.lower()]
+        conditions.append("status = :status")
+        params["status"] = status.lower()
     if incident_id:
-        filtered = [n for n in filtered if n["incident_id"] == incident_id]
+        conditions.append("incident_id = :incident_id")
+        params["incident_id"] = incident_id
     if recipient:
-        filtered = [n for n in filtered if n["recipient"] == recipient]
+        conditions.append("recipient = :recipient")
+        params["recipient"] = recipient
 
-    total = len(filtered)
-    start = (page - 1) * per_page
-    end = start + per_page
-    page_items = filtered[start:end]
+    where = ("WHERE " + " AND ".join(conditions)) if conditions else ""
+
+    with engine.connect() as conn:
+        total = conn.execute(text(f"SELECT COUNT(*) FROM notifications {where}"), params).scalar() or 0
+
+        offset = (page - 1) * per_page
+        params["limit"] = per_page
+        params["offset"] = offset
+        rows = conn.execute(
+            text(f"""
+                SELECT id, incident_id, channel, recipient, message, severity, status, metadata, created_at
+                FROM notifications {where}
+                ORDER BY created_at DESC
+                LIMIT :limit OFFSET :offset
+            """),
+            params,
+        ).mappings().all()
+
+    notifications = [
+        NotificationDetail(
+            id=str(r["id"]),
+            incident_id=r["incident_id"],
+            channel=r["channel"],
+            recipient=r["recipient"],
+            message=r["message"],
+            severity=r["severity"],
+            status=r["status"],
+            metadata=r["metadata"],
+            created_at=r["created_at"].isoformat() if hasattr(r["created_at"], "isoformat") else str(r["created_at"]),
+        )
+        for r in rows
+    ]
 
     return PaginatedNotifications(
         total=total,
         page=page,
         per_page=per_page,
-        notifications=[NotificationDetail(**n) for n in page_items],
+        notifications=notifications,
     )
 
 
@@ -430,23 +510,31 @@ async def list_notifications(
     summary="Notification statistics",
 )
 async def get_stats():
-    """Aggregate notification statistics — counts by channel and status."""
-    total = len(notification_log)
-    sent = sum(1 for n in notification_log if n["status"] == "sent")
-    failed = sum(1 for n in notification_log if n["status"] == "failed")
+    """Aggregate notification statistics from the database."""
+    with engine.connect() as conn:
+        row = conn.execute(text("""
+            SELECT
+                COUNT(*)                               AS total,
+                COUNT(*) FILTER (WHERE status = 'sent')   AS sent,
+                COUNT(*) FILTER (WHERE status = 'failed') AS failed
+            FROM notifications
+        """)).mappings().first()
 
-    by_channel: Dict[str, int] = {}
-    by_severity: Dict[str, int] = {}
-    for n in notification_log:
-        ch = n["channel"]
-        by_channel[ch] = by_channel.get(ch, 0) + 1
-        sev = n.get("severity") or "unknown"
-        by_severity[sev] = by_severity.get(sev, 0) + 1
+        channel_rows = conn.execute(text(
+            "SELECT channel, COUNT(*) AS cnt FROM notifications GROUP BY channel"
+        )).mappings().all()
+
+        severity_rows = conn.execute(text(
+            "SELECT COALESCE(severity, 'unknown') AS sev, COUNT(*) AS cnt FROM notifications GROUP BY severity"
+        )).mappings().all()
+
+    by_channel = {r["channel"]: r["cnt"] for r in channel_rows}
+    by_severity = {r["sev"]: r["cnt"] for r in severity_rows}
 
     return NotificationStats(
-        total=total,
-        sent=sent,
-        failed=failed,
+        total=row["total"],
+        sent=row["sent"],
+        failed=row["failed"],
         by_channel=by_channel,
         by_severity=by_severity,
     )
