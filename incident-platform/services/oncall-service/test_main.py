@@ -1,3 +1,6 @@
+# type: ignore
+# pyright: reportMissingImports=false, reportGeneralTypeErrors=false
+
 """
 Tests for On-Call Service v2.1.0
 Coverage target: >= 95%
