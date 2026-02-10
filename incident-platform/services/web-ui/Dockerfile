@@ -26,6 +26,12 @@ server {
     root /usr/share/nginx/html;
     index index.html;
 
+    # Prometheus metrics endpoint (minimal — just proves nginx is alive)
+    location = /metrics {
+        default_type "text/plain; version=0.0.4; charset=utf-8";
+        return 200 "# HELP nginx_up Whether the nginx web-ui is up\n# TYPE nginx_up gauge\nnginx_up 1\n# HELP nginx_http_requests_total Placeholder request counter\n# TYPE nginx_http_requests_total counter\nnginx_http_requests_total 0\n";
+    }
+
     # API proxy to gateway
     location /api/ {
         proxy_pass http://api-gateway:8080;
