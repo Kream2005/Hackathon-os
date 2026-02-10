@@ -1,0 +1,1 @@
+# alert-ingestion application package
