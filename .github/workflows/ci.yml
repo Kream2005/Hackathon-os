@@ -5,10 +5,12 @@ on:
     branches: [main, develop]
     paths:
       - 'incident-platform/**'
+      - '.github/workflows/**'
   pull_request:
     branches: [main]
     paths:
       - 'incident-platform/**'
+      - '.github/workflows/**'
 
 env:
   POSTGRES_USER: hackathon
